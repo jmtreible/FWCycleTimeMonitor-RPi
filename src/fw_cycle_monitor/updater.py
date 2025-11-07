@@ -34,16 +34,6 @@ def update_repository(repo_path: Path, remote: str = "origin", branch: str = "ma
         return False
 
     try:
-        remotes = _run_git_command(["remote"], repo_path).stdout.splitlines()
-    except subprocess.CalledProcessError as exc:
-        LOGGER.warning("Git command failed: %s", exc)
-        return False
-
-    if remote not in remotes:
-        LOGGER.info("Remote '%s' is not configured; skipping update", remote)
-        return False
-
-    try:
         _run_git_command(["fetch", remote], repo_path)
         local_rev = _run_git_command(["rev-parse", "HEAD"], repo_path).stdout.strip()
         remote_rev = _run_git_command(["rev-parse", f"{remote}/{branch}"], repo_path).stdout.strip()

@@ -1,6 +1,7 @@
 # FW Cycle Time Monitor
 
 A lightweight Raspberry Pi application that logs mold close events for injection molding machines. Each detected cycle writes the cycle number, machine identifier, and timestamp to a CSV file for production tracking.
+A lightweight Raspberry Pi application that logs mold close events for injection molding machines. Each detected cycle writes the machine identifier and timestamp to a CSV file for production tracking.
 
 ## Features
 
@@ -79,6 +80,7 @@ Follow these steps if you prefer to manage the environment yourself (e.g., durin
    ```
 
 2. **Clone (or extract) the repository**
+2. **Clone the repository** (or copy the packaged distribution):
 
    ```bash
    git clone https://github.com/<your-org>/FWCycleTimeMonitor-RPi.git
@@ -86,6 +88,7 @@ Follow these steps if you prefer to manage the environment yourself (e.g., durin
    ```
 
 3. **Install the application**
+3. **Install the application** (editable/development mode shown):
 
    ```bash
    pip install -e .
@@ -94,6 +97,7 @@ Follow these steps if you prefer to manage the environment yourself (e.g., durin
    > Use `python3 -m pip install --user -e .` if you prefer a user-local editable install instead of a system-wide one.
 
    To install from a built wheel/sdist (produced via `python -m build`):
+   For regular installation from a package wheel or sdist:
 
    ```bash
    pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
@@ -132,6 +136,7 @@ python -m fw_cycle_monitor.launcher
 - **Machine ID**: Text identifier (e.g. `M201`). Used in the CSV file name and log entries.
 - **GPIO Pin (BCM)**: Input pin that receives the 3.3 V mold close signal (BCM numbering).
 - **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`, and cycle numbers reset to 1 every day at 3 AM.
+- **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `machine_id,timestamp`.
 
 The application persists settings to `~/.config/fw_cycle_monitor/config.json`.
 

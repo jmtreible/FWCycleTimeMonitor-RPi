@@ -182,27 +182,18 @@ class Application(tk.Tk):
         self.destroy()
 
 
-def main() -> int:
+def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    try:
-        app = Application()
-    except tk.TclError as exc:
-        LOGGER.error("Unable to start the GUI: %s", exc)
-        LOGGER.error(
-            "A graphical environment is required. Launch the application from the Raspberry Pi desktop or an X11 session."
-        )
-        return 1
+    app = Application()
     try:
         app.mainloop()
     except KeyboardInterrupt:  # pragma: no cover - allow ctrl+c
         LOGGER.info("Application interrupted")
-        return 0
-
-    return 0
+        sys.exit(0)
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()
