@@ -150,6 +150,8 @@ class CycleMonitor:
         )
 
     def _setup_gpio(self) -> None:
+    def _setup_gpio(self) -> None:
+        Path(self.config.csv_directory).mkdir(parents=True, exist_ok=True)
         GPIO.setup(self.config.gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]
         GPIO.add_event_detect(  # type: ignore[attr-defined]
             self.config.gpio_pin,
@@ -162,6 +164,17 @@ class CycleMonitor:
         timestamp = datetime.now(timezone.utc).astimezone()
         cycle_number = self._record_event(timestamp)
         if cycle_number is None:
+        csv_path = self.config.csv_path()
+        try:
+            is_new_file = not csv_path.exists()
+            with csv_path.open("a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                if is_new_file:
+                    writer.writerow(["machine_id", "timestamp"])
+                writer.writerow([self.config.machine_id, timestamp.isoformat()])
+            LOGGER.debug("Logged cycle at %s to %s", timestamp.isoformat(), csv_path)
+        except OSError:
+            LOGGER.exception("Failed to write cycle event to %s", csv_path)
             return
 
         with self._lock:
@@ -182,6 +195,13 @@ class CycleMonitor:
 
         timestamp = datetime.now(timezone.utc).astimezone()
         self._record_event(timestamp)
+        csv_path = self.config.csv_path()
+        is_new_file = not csv_path.exists()
+        with csv_path.open("a", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            if is_new_file:
+                writer.writerow(["machine_id", "timestamp"])
+            writer.writerow([self.config.machine_id, timestamp.isoformat()])
         with self._lock:
             self._stats.last_event_time = timestamp
             self._stats.events_logged += 1
