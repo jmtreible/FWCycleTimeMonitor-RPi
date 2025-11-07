@@ -1,5 +1,6 @@
 # FW Cycle Time Monitor
 
+A lightweight Raspberry Pi application that logs mold close events for injection molding machines. Each detected cycle writes the cycle number, machine identifier, and timestamp to a CSV file for production tracking.
 A lightweight Raspberry Pi application that logs mold close events for injection molding machines. Each detected cycle writes the machine identifier and timestamp to a CSV file for production tracking.
 
 ## Features
@@ -8,6 +9,8 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 - **Configurable logging**: Define machine number, GPIO input pin, and CSV storage directory. CSV files follow the `CM_<MachineID>.csv` naming pattern.
 - **Simple GUI**: Tkinter-based interface to configure hardware settings, start/stop monitoring, and log test events without hardware.
 - **Raspberry Pi ready**: Uses `RPi.GPIO` for hardware access and is packaged for straightforward installation.
+- **Cycle counter support**: Every event updates a per-machine counter that automatically resets to 1 at 3 AM each day.
+- **Guided installation**: A one-command installer prepares dependencies, configures the network share, enables the boot service, and drops a desktop shortcut for the GUI.
 - **Auto-start support**: Example `systemd` unit file for launching on boot.
 
 ## Project layout
@@ -16,6 +19,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 .
 ├── pyproject.toml            # Packaging metadata
 ├── README.md                 # Project documentation
+├── scripts/install_fw_cycle_monitor.sh  # Automated Raspberry Pi installer
 ├── src/fw_cycle_monitor/     # Application source code
 │   ├── __init__.py
 │   ├── __main__.py           # Allows `python -m fw_cycle_monitor`
@@ -29,6 +33,44 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 
 ## Installation
 
+### Automated setup (recommended)
+
+1. Download or clone the repository onto the Raspberry Pi:
+
+   ```bash
+   git clone https://github.com/<your-org>/FWCycleTimeMonitor-RPi.git
+   cd FWCycleTimeMonitor-RPi
+   ```
+
+2. Make the installer executable (first run only):
+
+   ```bash
+   chmod +x scripts/install_fw_cycle_monitor.sh
+   ```
+
+3. Run the installer with `sudo`:
+
+   ```bash
+   sudo ./scripts/install_fw_cycle_monitor.sh
+   ```
+
+   The script performs the following actions:
+
+   - Installs required APT packages (`python3`, `python3-tk`, `git`, `cifs-utils`, `rsync`, etc.).
+   - Installs the `fw-cycle-monitor` Python package with Raspberry Pi GPIO extras.
+   - Copies the repository to `/opt/fw-cycle-monitor` so the auto-updater has a stable working tree.
+   - Adds the network share `//192.168.0.249/Apps` to `/etc/fstab`, mounting it at `${HOME}/Apps` with the provided credentials (`Operation1` / `Crows1991!`).
+   - Enables and starts the `fw-cycle-monitor.service` systemd unit that launches the auto-updating monitor on boot.
+   - Creates a “FW Cycle Monitor” desktop shortcut that runs the GUI (`fw-cycle-monitor`).
+
+   > **Security note:** Credentials for the network share are stored in `/etc/fstab`. Review and adjust permissions according to your facility’s policies.
+
+4. Confirm the share is mounted (`ls ${HOME}/Apps`) and that the desktop shortcut launches the GUI. The monitoring service will continue running in the background.
+
+### Manual installation (for development)
+
+Follow these steps if you prefer to manage the environment yourself (e.g., during development or when adapting the project for a different deployment workflow):
+
 1. **Install system dependencies**
 
    ```bash
@@ -37,6 +79,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
    sudo pip3 install RPi.GPIO  # already available on Raspberry Pi OS, if missing
    ```
 
+2. **Clone (or extract) the repository**
 2. **Clone the repository** (or copy the packaged distribution):
 
    ```bash
@@ -44,17 +87,31 @@ A lightweight Raspberry Pi application that logs mold close events for injection
    cd FWCycleTimeMonitor-RPi
    ```
 
+3. **Install the application**
 3. **Install the application** (editable/development mode shown):
 
    ```bash
    pip install -e .
    ```
 
+   > Use `python3 -m pip install --user -e .` if you prefer a user-local editable install instead of a system-wide one.
+
+   To install from a built wheel/sdist (produced via `python -m build`):
    For regular installation from a package wheel or sdist:
 
    ```bash
    pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
    ```
+
+### Customizing the installer
+
+The installer uses the account that invokes `sudo` as the service user and mounts the network share at `${HOME}/Apps`. Adjust `scripts/install_fw_cycle_monitor.sh` before running it if you need to:
+
+- Change the mount location, credentials, or SMB server information.
+- Deploy the repository to a different directory than `/opt/fw-cycle-monitor`.
+- Skip the desktop shortcut creation (comment out `create_desktop_entry`).
+
+Re-run the installer after making modifications to propagate the changes.
 
 ## Usage
 
@@ -63,6 +120,8 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 ```bash
 python -m fw_cycle_monitor
 ```
+
+You can also use the **FW Cycle Monitor** desktop shortcut that the installer places on the Raspberry Pi desktop. Internally it runs the same `fw-cycle-monitor` entry point.
 
 ### Launch with update checks
 
@@ -76,6 +135,7 @@ python -m fw_cycle_monitor.launcher
 
 - **Machine ID**: Text identifier (e.g. `M201`). Used in the CSV file name and log entries.
 - **GPIO Pin (BCM)**: Input pin that receives the 3.3 V mold close signal (BCM numbering).
+- **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`, and cycle numbers reset to 1 every day at 3 AM.
 - **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `machine_id,timestamp`.
 
 The application persists settings to `~/.config/fw_cycle_monitor/config.json`.
@@ -96,6 +156,8 @@ sudo systemctl start fw-cycle-monitor.service
 ```
 
 The service uses the update-aware launcher so the Pi automatically pulls the latest code before starting the GUI at boot.
+
+> The automated installer already deploys and enables a tailored unit at `/etc/systemd/system/fw-cycle-monitor.service`. Use the steps above only if you need to perform a custom/manual deployment.
 
 ## Packaging
 
