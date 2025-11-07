@@ -95,6 +95,19 @@ class CycleMonitor:
     def stats(self) -> MonitorStats:
         return self._stats
 
+    @property
+    def csv_path(self) -> Path:
+        """Return the CSV path associated with the current configuration."""
+
+        return self.config.csv_path()
+
+    @property
+    def is_running(self) -> bool:
+        """Report whether the monitor is actively watching the GPIO pin."""
+
+        with self._lock:
+            return self._running
+
     def start(self) -> None:
         if not _GPIO_AVAILABLE:
             raise GPIOUnavailableError(
@@ -124,6 +137,17 @@ class CycleMonitor:
                 LOGGER.debug("Event detect removal failed", exc_info=True)
             GPIO.cleanup(self.config.gpio_pin)  # type: ignore[attr-defined]
             self._running = False
+
+    def reset_cycle_counter(self, reference: Optional[datetime] = None) -> None:
+        """Manually reset the cycle counter so the next event logs as cycle 1."""
+
+        reference_time = (reference or datetime.now(timezone.utc)).astimezone()
+        with self._lock:
+            self._counter.configure(reference_time, 0)
+        LOGGER.info(
+            "Cycle counter manually reset; next cycle will start at 1 using %s as reference",
+            reference_time.isoformat(),
+        )
 
     def _setup_gpio(self) -> None:
         GPIO.setup(self.config.gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]

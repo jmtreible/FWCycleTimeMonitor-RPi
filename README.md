@@ -75,6 +75,7 @@ Follow these steps if you prefer to manage the environment yourself (e.g., durin
    ```bash
    sudo apt update
    sudo apt install python3 python3-pip python3-tk git
+   sudo pip3 install RPi.GPIO  # already available on Raspberry Pi OS, if missing
    ```
 
 2. **Clone (or extract) the repository**
@@ -86,22 +87,16 @@ Follow these steps if you prefer to manage the environment yourself (e.g., durin
 
 3. **Install the application**
 
-   For editable/development mode:
-
    ```bash
-   python3 -m pip install --user -e .
+   pip install -e .
    ```
 
-   Or install from a built wheel/sdist (produced via `python -m build`):
+   > Use `python3 -m pip install --user -e .` if you prefer a user-local editable install instead of a system-wide one.
+
+   To install from a built wheel/sdist (produced via `python -m build`):
 
    ```bash
-   python3 -m pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
-   ```
-
-4. **Install Raspberry Pi GPIO support (when running on real hardware)**
-
-   ```bash
-   python3 -m pip install RPi.GPIO
+   pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
    ```
 
 ### Customizing the installer
