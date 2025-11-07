@@ -8,6 +8,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 - **Configurable logging**: Define machine number, GPIO input pin, and CSV storage directory. CSV files follow the `CM_<MachineID>.csv` naming pattern.
 - **Simple GUI**: Tkinter-based interface to configure hardware settings, start/stop monitoring, and log test events without hardware.
 - **Raspberry Pi ready**: Uses `RPi.GPIO` for hardware access and is packaged for straightforward installation.
+- **Cycle counter support**: Every event updates a per-machine counter that automatically resets to 1 at 3 AM each day.
 - **Guided installation**: A one-command installer prepares dependencies, configures the network share, enables the boot service, and drops a desktop shortcut for the GUI.
 - **Auto-start support**: Example `systemd` unit file for launching on boot.
 

@@ -14,6 +14,8 @@ from .config import AppConfig
 
 LOGGER = logging.getLogger(__name__)
 
+__all__ = ["CycleMonitor", "GPIOUnavailableError", "MonitorStats"]
+
 try:  # pragma: no cover - hardware-specific import
     import RPi.GPIO as GPIO  # type: ignore
 
