@@ -61,25 +61,41 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 
 ### Manual installation (for development)
 
-If you prefer a manual setup—for example, on a development workstation—install the dependencies yourself:
+Follow these steps if you prefer to manage the environment yourself (e.g., during development or when adapting the project for a different deployment workflow):
 
-```bash
-sudo apt update
-sudo apt install python3 python3-pip python3-tk git
-python3 -m pip install --user -e .
-```
+1. **Install system dependencies**
 
-You can also install from a wheel/sdist built via `python -m build`:
+   ```bash
+   sudo apt update
+   sudo apt install python3 python3-pip python3-tk git
+   ```
 
-```bash
-python3 -m pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
-```
+2. **Clone (or extract) the repository**
 
-Install `RPi.GPIO` (or your preferred GPIO backend) if you plan to run against actual Raspberry Pi hardware:
+   ```bash
+   git clone https://github.com/<your-org>/FWCycleTimeMonitor-RPi.git
+   cd FWCycleTimeMonitor-RPi
+   ```
 
-```bash
-python3 -m pip install RPi.GPIO
-```
+3. **Install the application**
+
+   For editable/development mode:
+
+   ```bash
+   python3 -m pip install --user -e .
+   ```
+
+   Or install from a built wheel/sdist (produced via `python -m build`):
+
+   ```bash
+   python3 -m pip install fw-cycle-monitor-0.1.0-py3-none-any.whl
+   ```
+
+4. **Install Raspberry Pi GPIO support (when running on real hardware)**
+
+   ```bash
+   python3 -m pip install RPi.GPIO
+   ```
 
 ### Customizing the installer
 
