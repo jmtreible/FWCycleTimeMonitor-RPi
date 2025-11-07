@@ -1,0 +1,16 @@
+[Unit]
+Description=FW Cycle Time Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/FWCycleTimeMonitor-RPi
+Environment=FW_CYCLE_MONITOR_REPO=/home/pi/FWCycleTimeMonitor-RPi
+ExecStart=/usr/bin/env python3 -m fw_cycle_monitor.launcher
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
