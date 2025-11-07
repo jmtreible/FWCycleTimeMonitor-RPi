@@ -40,7 +40,13 @@ A lightweight Raspberry Pi application that logs mold close events for injection
    cd FWCycleTimeMonitor-RPi
    ```
 
-2. Run the installer with `sudo`:
+2. Make the installer executable (first run only):
+
+   ```bash
+   chmod +x scripts/install_fw_cycle_monitor.sh
+   ```
+
+3. Run the installer with `sudo`:
 
    ```bash
    sudo ./scripts/install_fw_cycle_monitor.sh
@@ -57,7 +63,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 
    > **Security note:** Credentials for the network share are stored in `/etc/fstab`. Review and adjust permissions according to your facility’s policies.
 
-3. Confirm the share is mounted (`ls ${HOME}/Apps`) and that the desktop shortcut launches the GUI. The monitoring service will continue running in the background.
+4. Confirm the share is mounted (`ls ${HOME}/Apps`) and that the desktop shortcut launches the GUI. The monitoring service will continue running in the background.
 
 ### Manual installation (for development)
 
