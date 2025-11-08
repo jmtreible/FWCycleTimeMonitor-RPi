@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fw-cycle-monitor"
+version = "0.1.0"
+description = "Cycle time monitoring utility for injection molding machines"
+readme = "README.md"
+authors = [{name = "FW Automation"}]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+raspberrypi = ["RPi.GPIO", "lgpio"]
+
+[project.scripts]
+fw-cycle-monitor = "fw_cycle_monitor.gui:main"
+fw-cycle-monitor-launcher = "fw_cycle_monitor.launcher:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
