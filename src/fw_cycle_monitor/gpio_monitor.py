@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -530,6 +531,18 @@ class CycleMonitor:
         except OSError:
             LOGGER.exception("Failed to persist pending events to %s", spool_path)
 
+    def _open_for_append(self, path: Path):
+        """Open ``path`` for appending with shared-friendly flags."""
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+        fd = os.open(path, flags, 0o664)
+        try:
+            os.lseek(fd, 0, os.SEEK_END)
+            return os.fdopen(fd, "a", newline="")
+        except Exception:
+            os.close(fd)
+            raise
+
     def _append_with_retry(self, csv_path: Path, new_row: list[str]) -> bool:
         with self._lock:
             if not self._pending_loaded:
@@ -537,7 +550,7 @@ class CycleMonitor:
             rows_to_write = [row for row in self._pending_rows]
             rows_to_write.append(new_row)
             try:
-                with csv_path.open("a", newline="") as csv_file:
+                with self._open_for_append(csv_path) as csv_file:
                     writer = csv.writer(csv_file)
                     writer.writerows(rows_to_write)
                 self._pending_rows.clear()
