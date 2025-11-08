@@ -14,6 +14,7 @@ INSTALL_HOME="$(eval echo "~${INSTALL_USER}")"
 INSTALL_DIR="/opt/fw-cycle-monitor"
 VENV_DIR="${INSTALL_DIR}/.venv"
 VENV_BIN="${VENV_DIR}/bin"
+ACTIVATE="${VENV_BIN}/activate"
 DESKTOP_NAME="FW Cycle Monitor.desktop"
 MOUNT_POINT="${INSTALL_HOME}/FWCycle"
 FSTAB_LINE="//192.168.0.249/Apps/FWCycle ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
@@ -34,8 +35,8 @@ create_virtualenv() {
     if [[ -d "${VENV_DIR}" ]]; then
         echo "Existing virtual environment detected at ${VENV_DIR}."
     else
-        echo "Creating Python virtual environment at ${VENV_DIR}..."
-        python3 -m venv "${VENV_DIR}"
+        echo "Creating Python virtual environment at ${VENV_DIR} (with system site packages)..."
+        python3 -m venv --system-site-packages "${VENV_DIR}"
     fi
 
     if [[ ! -x "${VENV_BIN}/python" ]]; then
@@ -44,10 +45,55 @@ create_virtualenv() {
     fi
 }
 
+install_virtualenv_dependencies() {
+    echo "Upgrading core Python tooling in the virtual environment..."
+    "${VENV_BIN}/python" -m pip install --upgrade pip setuptools wheel
+
+    echo "Installing GPIO backends (RPi.GPIO, lgpio, rpi-lgpio) inside the virtual environment..."
+    "${VENV_BIN}/pip" install --upgrade RPi.GPIO lgpio rpi-lgpio
+
+    echo "Verifying GPIO modules import correctly inside the virtual environment..."
+    if ! "${VENV_BIN}/python" - <<'PY'
+import importlib
+
+for name in ("RPi.GPIO", "lgpio", "rpi_lgpio"):
+    importlib.import_module(name)
+PY
+    then
+        echo "Error: Failed to import GPIO dependencies inside the virtual environment." >&2
+        exit 1
+    fi
+}
+
 install_python_package() {
-    echo "Installing Python package into ${VENV_DIR}..."
-    "${VENV_BIN}/python" -m pip install --upgrade pip wheel
+    echo "Installing FW Cycle Monitor into ${VENV_DIR}..."
     "${VENV_BIN}/pip" install --upgrade "${INSTALL_DIR}[raspberrypi]"
+}
+
+ensure_venv_launcher() {
+    echo "Creating helper script to run commands inside the virtual environment..."
+    cat > "${INSTALL_DIR}/run_in_venv.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTIVATE_PATH="__ACTIVATE__"
+if [[ ! -f "${ACTIVATE_PATH}" ]]; then
+    echo "Missing virtual environment activate script at ${ACTIVATE_PATH}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ACTIVATE_PATH}"
+
+if [[ $# -eq 0 ]]; then
+    exec "$SHELL"
+else
+    exec "$@"
+fi
+SCRIPT
+
+    sed -i "s|__ACTIVATE__|${ACTIVATE}|g" "${INSTALL_DIR}/run_in_venv.sh"
+    chmod +x "${INSTALL_DIR}/run_in_venv.sh"
 }
 
 ensure_cli_shims() {
@@ -57,15 +103,15 @@ ensure_cli_shims() {
 
     cat > "${shim_dir}/fw-cycle-monitor" <<'SHIM'
 #!/usr/bin/env bash
-exec "__VENV_BIN__/python" -m fw_cycle_monitor "$@"
+exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor "$@"
 SHIM
 
     cat > "${shim_dir}/fw-cycle-monitor-launcher" <<'SHIM'
 #!/usr/bin/env bash
-exec "__VENV_BIN__/python" -m fw_cycle_monitor.launcher "$@"
+exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor.launcher "$@"
 SHIM
 
-    sed -i "s|__VENV_BIN__|${VENV_BIN}|g" "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
+    sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
     chmod +x "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
 }
 
@@ -119,7 +165,7 @@ Version=1.0
 Type=Application
 Name=FW Cycle Monitor
 Comment=Launch the FW Cycle Monitor configuration GUI
-Exec=${VENV_BIN}/python -m fw_cycle_monitor
+Exec=${INSTALL_DIR}/run_in_venv.sh python -m fw_cycle_monitor
 Icon=${icon_path}
 Terminal=false
 Categories=Utility;
@@ -145,7 +191,7 @@ User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
 Environment=PATH=${VENV_BIN}:/usr/bin:/bin
-ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.launcher
+ExecStart=${INSTALL_DIR}/run_in_venv.sh python -m fw_cycle_monitor.launcher
 Restart=on-failure
 RestartSec=5
 
@@ -161,7 +207,9 @@ SERVICE
 install_apt_packages
 deploy_repository
 create_virtualenv
+install_virtualenv_dependencies
 install_python_package
+ensure_venv_launcher
 ensure_cli_shims
 configure_network_share
 create_desktop_entry

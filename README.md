@@ -11,7 +11,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 - **Isolated runtime**: The installer provisions a dedicated Python virtual environment so GPIO dependencies remain consistent across Raspberry Pi OS releases.
 - **Cycle counter support**: Every event updates a per-machine counter that automatically resets to 1 at 3 AM each day.
 - **Resilient logging**: If a CSV is temporarily locked (e.g., opened from another workstation), events are queued locally and flushed once access is restored.
-- **Guided installation**: A one-command installer prepares dependencies, configures the network share, enables the boot service, and drops a desktop shortcut for the GUI.
+- **Guided installation**: A one-command installer prepares dependencies, configures the network share, enables the boot service, and drops a desktop shortcut for the GUI that auto-activates the managed virtual environment.
 - **Auto-start support**: Example `systemd` unit file for launching on boot.
 
 ## Project layout
@@ -59,8 +59,9 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 
    - Installs required APT packages (`python3`, `python3-venv`, `python3-tk`, `git`, `cifs-utils`, `rsync`, etc.).
    - Copies the repository to `/opt/fw-cycle-monitor` so the auto-updater has a stable working tree.
-   - Provisions a Python virtual environment at `/opt/fw-cycle-monitor/.venv` and installs `fw-cycle-monitor[raspberrypi]` inside it (including `RPi.GPIO` and `lgpio`).
-   - Creates command shims (`/usr/local/bin/fw-cycle-monitor*`) that activate the virtual environment automatically.
+   - Provisions a Python virtual environment at `/opt/fw-cycle-monitor/.venv`, shares system GPIO bindings, and installs `fw-cycle-monitor[raspberrypi]` (including `RPi.GPIO`, `lgpio`, and `rpi-lgpio`).
+   - Verifies the GPIO libraries import successfully inside the managed environment so edge detection is ready immediately after install.
+   - Creates command shims (`/usr/local/bin/fw-cycle-monitor*`) that activate the virtual environment automatically via the bundled `run_in_venv.sh` helper.
    - Adds the network share `//192.168.0.249/Apps/FWCycle` to `/etc/fstab`, mounting it at `${HOME}/FWCycle` with the provided credentials (`Operation1` / `Crows1991!`).
    - Enables and starts the `fw-cycle-monitor.service` systemd unit that launches the auto-updating monitor on boot.
    - Creates a “FW Cycle Monitor” desktop shortcut that runs the GUI inside the managed environment.
@@ -117,20 +118,29 @@ Re-run the installer after making modifications to propagate the changes.
 
 ### Launch the GUI directly
 
+When running inside the managed installation on the Raspberry Pi, use one of the following methods—each one sources the virtual environment before launching the GUI so GPIO dependencies (`lgpio`, `RPi.GPIO`) are always available:
+
 ```bash
+fw-cycle-monitor
+# or explicitly:
+/opt/fw-cycle-monitor/run_in_venv.sh python -m fw_cycle_monitor
+# or interactively:
+source /opt/fw-cycle-monitor/.venv/bin/activate
 python -m fw_cycle_monitor
 ```
 
-You can also use the **FW Cycle Monitor** desktop shortcut that the installer places on the Raspberry Pi desktop. Internally it runs the same `fw-cycle-monitor` entry point.
+You can also use the **FW Cycle Monitor** desktop shortcut that the installer places on the Raspberry Pi desktop. Internally it calls `run_in_venv.sh` with the GUI entry point.
 
-> When installed via `install_fw_cycle_monitor.sh`, the `fw-cycle-monitor` and `fw-cycle-monitor-launcher` commands on the Pi automatically activate the managed virtual environment.
+> The `fw-cycle-monitor` and `fw-cycle-monitor-launcher` command shims, the systemd unit, and the desktop shortcut all activate the virtual environment automatically before executing Python modules.
 
 ### Launch with update checks
 
 The launcher pulls the newest `main` branch revision before starting the GUI. By default it uses the repository that contains the scripts, but you can override it using the `FW_CYCLE_MONITOR_REPO` environment variable.
 
 ```bash
-python -m fw_cycle_monitor.launcher
+fw-cycle-monitor-launcher
+# or
+/opt/fw-cycle-monitor/run_in_venv.sh python -m fw_cycle_monitor.launcher
 ```
 
 ### Configuration fields
