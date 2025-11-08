@@ -133,6 +133,8 @@ You can also use the **FW Cycle Monitor** desktop shortcut that the installer pl
 
 > The `fw-cycle-monitor`, `fw-cycle-monitor-launcher`, and `fw-cycle-monitor-daemon` command shims, along with the systemd unit and the desktop shortcut, all activate the virtual environment automatically before executing Python modules.
 
+When the GUI is running on an installed system, the **Start Service** and **Stop Service** buttons issue `systemctl start/stop fw-cycle-monitor.service` so you can manage the background daemon without opening a terminal. If the current user lacks permission to control the unit, a dialog explains that elevated rights (for example via `sudo` or a policykit rule) are required.
+
 ### Launch with update checks
 
 The launcher pulls the newest `main` branch revision before starting the GUI. By default it uses the repository that contains the scripts, but you can override it using the `FW_CYCLE_MONITOR_REPO` environment variable.
@@ -158,11 +160,11 @@ To inspect the stored cycle numbers manually, open the `state.json` file in that
 2. The `FW_CYCLE_MONITOR_CONFIG_DIR` environment variable in the unit file points to the same directory the GUI uses. After editing, restart the service and monitor the logs with `journalctl -u fw-cycle-monitor.service` to verify that the monitor reports the restored `last_cycle` number on startup.
 3. The CSV directory contains the matching `CM_<MachineID>.csv.state.json` sidecar. If a maintenance process clears old CSV logs, leave the sidecar file in place so the next monitor session can resume from the most recent counter.
 
-> If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue and automatically appended once the file becomes writable again. The monitor also normalizes file permissions to `rw-rw-r--` so other users can read the logs while the Raspberry Pi retains write access.
+> If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue. A dedicated background writer periodically opens the CSV, appends the queued rows, and closes it immediately so other clients retain read access. The monitor also normalizes file permissions to `rw-rw-r--` so other users can read the logs while the Raspberry Pi retains write access.
 
 ### Test events without hardware
 
-Use the **Log Test Event** button to append a simulated timestamp to the configured CSV. This works even when running on a non-Raspberry Pi development machine.
+Use the **Log Test Event** button to append a simulated timestamp directly to the configured CSV. This works even when running on a non-Raspberry Pi development machine and does not require the service to be running.
 
 ## Auto-start with systemd
 

@@ -97,6 +97,10 @@ class CycleMonitor:
         self._csv_header = ["cycle_number", "machine_id", "timestamp"]
         self._pending_rows: list[list[str]] = []
         self._pending_loaded = False
+        self._write_queue: list[list[str]] = []
+        self._queue_event = threading.Event()
+        self._writer_stop = threading.Event()
+        self._writer_thread: Optional[threading.Thread] = None
 
     @property
     def stats(self) -> MonitorStats:
@@ -181,11 +185,33 @@ class CycleMonitor:
             if self._running:
                 LOGGER.debug("CycleMonitor already running")
                 return
+            self._running = True
+
+        try:
             LOGGER.info("Starting monitor on pin %s for machine %s", self.config.gpio_pin, self.config.machine_id)
             self._restore_counter_state()
             self._prepare_storage()
+        except Exception:
+            with self._lock:
+                self._running = False
+            raise
+
+        with self._lock:
+            self._writer_stop.clear()
+            self._queue_event.clear()
+            writer_thread = threading.Thread(target=self._writer_loop, name="cycle-writer", daemon=True)
+            self._writer_thread = writer_thread
+
+        writer_thread.start()
+
+        try:
             self._setup_gpio()
-            self._running = True
+        except Exception:
+            LOGGER.exception("Failed to configure GPIO; stopping writer thread")
+            self.stop()
+            raise
+
+        self._queue_event.set()
 
     def stop(self) -> None:
         if not _GPIO_AVAILABLE:
@@ -201,6 +227,31 @@ class CycleMonitor:
                 LOGGER.debug("Event detect removal failed", exc_info=True)
             GPIO.cleanup(self.config.gpio_pin)  # type: ignore[attr-defined]
             self._running = False
+
+        self._stop_writer_thread()
+        self._flush_queue()
+
+    def _stop_writer_thread(self) -> None:
+        thread = self._writer_thread
+        if not thread:
+            return
+        self._writer_stop.set()
+        self._queue_event.set()
+        try:
+            thread.join(timeout=10)
+        except Exception:  # pragma: no cover - defensive join handling
+            LOGGER.debug("Writer thread join interrupted", exc_info=True)
+        self._writer_thread = None
+        self._writer_stop.clear()
+        self._queue_event.clear()
+
+    def _writer_loop(self) -> None:  # pragma: no cover - background worker
+        while not self._writer_stop.is_set():
+            self._queue_event.wait(timeout=5)
+            self._queue_event.clear()
+            self._flush_queue()
+        # Final flush after stop requested
+        self._flush_queue()
 
     def reset_cycle_counter(self, reference: Optional[datetime] = None) -> None:
         """Manually reset the cycle counter so the next event logs as cycle 1."""
@@ -408,7 +459,7 @@ class CycleMonitor:
         self._ensure_shared_permissions(csv_path)
         self._csv_initialized = True
         self._load_pending_rows()
-        self._append_with_retry(csv_path)
+        self._flush_queue()
 
     def _ensure_migrated(self, csv_path: Path) -> Optional[tuple[datetime, int]]:
         try:
@@ -478,10 +529,7 @@ class CycleMonitor:
         cycle_number = self._counter.record(timestamp)
         csv_path = self.config.csv_path()
         row = [str(cycle_number), self.config.machine_id, timestamp.isoformat()]
-        if not self._append_with_retry(csv_path, row):
-            LOGGER.warning(
-                "Cycle #%s queued locally; CSV %s is currently unavailable", cycle_number, csv_path
-            )
+        self._enqueue_row(row)
         try:
             save_cycle_state(
                 self.config.machine_id,
@@ -495,6 +543,21 @@ class CycleMonitor:
 
     # -----------------
     # Pending row logic
+
+    def _enqueue_row(self, row: list[str]) -> None:
+        with self._lock:
+            if not self._pending_loaded:
+                self._load_pending_rows()
+            self._write_queue.append(row)
+            running = self._running
+
+        if running:
+            self._queue_event.set()
+        else:
+            if not self._flush_queue():
+                LOGGER.warning(
+                    "CSV file %s is busy; queued cycle #%s for retry", self.config.csv_path(), row[0]
+                )
 
     def _spool_path(self) -> Path:
         csv_path = self.config.csv_path()
@@ -532,59 +595,47 @@ class CycleMonitor:
         except OSError:
             LOGGER.exception("Failed to persist pending events to %s", spool_path)
 
-    def _open_for_append(self, path: Path):
-        """Open ``path`` for appending without blocking shared readers."""
-
-        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
-        fd = os.open(path, flags, 0o664)
-        try:
-            handle = os.fdopen(fd, "a+", newline="")
-            try:
-                handle.seek(0, os.SEEK_END)
-            except OSError:
-                LOGGER.debug("Failed to seek to end of %s after opening", path, exc_info=True)
-            return handle
-        except Exception:
-            os.close(fd)
-            raise
-
-    def _append_with_retry(self, csv_path: Path, new_row: Optional[list[str]] = None) -> bool:
+    def _flush_queue(self) -> bool:
+        csv_path = self.config.csv_path()
         with self._lock:
             if not self._pending_loaded:
                 self._load_pending_rows()
-            rows_to_write = [row for row in self._pending_rows]
-            if new_row is not None:
-                rows_to_write.append(new_row)
-            if not rows_to_write:
+            if not self._pending_rows and not self._write_queue:
                 return True
-            try:
-                with self._open_for_append(csv_path) as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerows(rows_to_write)
-                self._pending_rows.clear()
-                self._persist_pending_rows()
-                self._ensure_shared_permissions(csv_path)
-                if new_row is not None:
-                    LOGGER.debug(
-                        "Logged cycle #%s at %s to %s", new_row[0], new_row[2], csv_path
-                    )
-                else:
-                    LOGGER.debug("Flushed %s pending rows to %s", len(rows_to_write), csv_path)
-                return True
-            except OSError:
-                if new_row is not None:
-                    LOGGER.warning(
-                        "CSV file %s is busy; queueing cycle #%s for retry", csv_path, new_row[0],
-                        exc_info=True,
-                    )
-                else:
-                    LOGGER.warning(
-                        "CSV file %s is busy while flushing pending rows", csv_path,
-                        exc_info=True,
-                    )
+            rows_to_write = [row[:] for row in self._pending_rows]
+            rows_to_write.extend(self._write_queue)
+            latest_row: Optional[list[str]] = None
+            if self._write_queue:
+                latest_row = self._write_queue[-1]
+            elif self._pending_rows:
+                latest_row = self._pending_rows[-1]
+            had_new_rows = bool(self._write_queue)
+            self._pending_rows = []
+            self._write_queue = []
+
+        try:
+            with csv_path.open("a", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerows(rows_to_write)
+            self._ensure_shared_permissions(csv_path)
+            self._persist_pending_rows()
+            if latest_row and had_new_rows:
+                LOGGER.debug(
+                    "Logged cycle #%s at %s to %s", latest_row[0], latest_row[2], csv_path
+                )
+            elif rows_to_write:
+                LOGGER.debug("Flushed %s pending rows to %s", len(rows_to_write), csv_path)
+            return True
+        except OSError:
+            LOGGER.warning(
+                "CSV file %s is busy while flushing pending rows", csv_path,
+                exc_info=True,
+            )
+            with self._lock:
                 self._pending_rows = rows_to_write
-                self._persist_pending_rows()
-                return False
+                self._write_queue = []
+            self._persist_pending_rows()
+            return False
 
     # -----------------
     # Sidecar state persistence
