@@ -20,6 +20,7 @@ try:  # pragma: no cover - hardware-specific import
     import RPi.GPIO as GPIO  # type: ignore
 
     GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
     _GPIO_AVAILABLE = True
 except Exception:  # pragma: no cover - executed on non-RPi systems
     GPIO = None  # type: ignore
@@ -167,13 +168,60 @@ class CycleMonitor:
                 "RPi.GPIO is missing required attributes. Ensure the library is fully installed on the Raspberry Pi."
             )
 
-        GPIO.setup(self.config.gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]
-        GPIO.add_event_detect(  # type: ignore[attr-defined]
-            self.config.gpio_pin,
-            GPIO.RISING,
-            callback=self._handle_event,
-            bouncetime=200,
-        )
+        pin = self.config.gpio_pin
+
+        # ``add_event_detect`` raises ``RuntimeError`` if the pin already has
+        # edge detection configured.  This can happen when the monitor is
+        # restarted without a clean shutdown (for example, after a crash or
+        # power loss).  Clear any lingering configuration before attempting to
+        # initialise the pin so subsequent setup calls succeed.
+        try:
+            GPIO.remove_event_detect(pin)  # type: ignore[attr-defined]
+        except RuntimeError:
+            # No prior event detector was registered, which is fine.
+            pass
+        except Exception:  # pragma: no cover - best effort cleanup
+            LOGGER.debug("Ignoring error while clearing existing edge detection", exc_info=True)
+
+        try:
+            GPIO.cleanup(pin)  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - best effort cleanup
+            LOGGER.debug("Ignoring error during GPIO cleanup for pin %s", pin, exc_info=True)
+
+        try:
+            GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Failed to configure GPIO pin %s. Ensure the process has permission to access GPIO and no other service is using the pin." % pin
+            ) from exc
+
+        try:
+            GPIO.add_event_detect(  # type: ignore[attr-defined]
+                pin,
+                GPIO.RISING,
+                callback=self._handle_event,
+                bouncetime=200,
+            )
+        except RuntimeError as exc:
+            # Occasionally the underlying GPIO driver refuses to register the
+            # edge detector on the first attempt (particularly on systems using
+            # the newer lgpio backend).  Retry once after a full cleanup to give
+            # the kernel a chance to release the line before we escalate the
+            # failure to the caller.
+            LOGGER.warning("First attempt to add edge detection on pin %s failed; retrying", pin, exc_info=True)
+            try:
+                GPIO.cleanup(pin)  # type: ignore[attr-defined]
+                GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]
+                GPIO.add_event_detect(  # type: ignore[attr-defined]
+                    pin,
+                    GPIO.RISING,
+                    callback=self._handle_event,
+                    bouncetime=200,
+                )
+            except Exception as final_exc:
+                raise RuntimeError(
+                    "Failed to add edge detection on GPIO pin %s. Confirm the pin is wired correctly and that no other process has it reserved." % pin
+                ) from final_exc
 
     def _handle_event(self, channel: int) -> None:  # pragma: no cover - triggered by GPIO
         timestamp = datetime.now(timezone.utc).astimezone()
