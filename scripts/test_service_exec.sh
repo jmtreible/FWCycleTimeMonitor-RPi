@@ -46,6 +46,17 @@ fi
 printf 'Starting service command as %s...\n' "${service_user}"
 printf 'Command: %s\n' "${exec_cmd}"
 
+# If the ExecStart command references an absolute script path, make sure it exists
+read -r -a exec_parts <<< "${exec_cmd}"
+cmd_path="${exec_parts[0]:-}"
+if [[ "${cmd_path}" == /* ]]; then
+    if [[ ! -e "${cmd_path}" ]]; then
+        echo "Executable referenced in ExecStart is missing: ${cmd_path}" >&2
+        echo "Re-run the installer or restore the helper script before testing the service." >&2
+        exit 1
+    fi
+fi
+
 if command -v sudo >/dev/null 2>&1; then
     exec sudo -u "${service_user}" bash -lc "${exec_cmd}"
 else
