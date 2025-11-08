@@ -21,6 +21,7 @@ class AppConfig:
     machine_id: str = "M201"
     gpio_pin: int = 17
     csv_directory: Path = Path.home() / "fw_cycle_monitor_data"
+    reset_hour: int = 3
 
     def csv_path(self) -> Path:
         """Return the CSV path derived from the machine id."""
@@ -32,10 +33,18 @@ class AppConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
         defaults = cls()
         csv_directory = Path(data.get("csv_directory", defaults.csv_directory))
+        try:
+            reset_hour = int(data.get("reset_hour", defaults.reset_hour))
+        except (TypeError, ValueError):
+            reset_hour = defaults.reset_hour
+        if not 0 <= reset_hour <= 23:
+            reset_hour = defaults.reset_hour
+
         return cls(
             machine_id=data.get("machine_id", defaults.machine_id),
             gpio_pin=int(data.get("gpio_pin", defaults.gpio_pin)),
             csv_directory=csv_directory,
+            reset_hour=reset_hour,
         )
 
 

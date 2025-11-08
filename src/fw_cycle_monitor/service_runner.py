@@ -38,7 +38,7 @@ def _install_signal_handlers() -> None:
 def _summarize_config(config: AppConfig) -> str:
     return (
         f"machine_id={config.machine_id}, pin={config.gpio_pin}, "
-        f"csv={config.csv_path()}"
+        f"csv={config.csv_path()}, reset_hour={config.reset_hour}"
     )
 
 

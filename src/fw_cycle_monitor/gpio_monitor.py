@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import AppConfig
+from .state import load_cycle_state, save_cycle_state
 
 LOGGER = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ class CycleMonitor:
         self._lock = threading.Lock()
         self._stats = MonitorStats()
         self._running = False
-        self._counter = _CycleCounter()
+        self._counter = _CycleCounter(config.reset_hour)
+        self._counter_initialized = False
         self._csv_initialized = False
         self._csv_header = ["cycle_number", "machine_id", "timestamp"]
         self._pending_rows: list[list[str]] = []
@@ -111,6 +113,22 @@ class CycleMonitor:
         with self._lock:
             return self._running
 
+    def _restore_counter_state(self) -> None:
+        """Initialise the cycle counter from persisted state if available."""
+
+        state = load_cycle_state(self.config.machine_id)
+        if not state:
+            self._counter_initialized = False
+            return
+
+        reference = state.last_timestamp
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        reference = reference.astimezone()
+
+        self._counter.configure(reference, state.last_cycle)
+        self._counter_initialized = True
+
     def start(self) -> None:
         if not _GPIO_AVAILABLE:
             raise GPIOUnavailableError(
@@ -122,6 +140,7 @@ class CycleMonitor:
                 LOGGER.debug("CycleMonitor already running")
                 return
             LOGGER.info("Starting monitor on pin %s for machine %s", self.config.gpio_pin, self.config.machine_id)
+            self._restore_counter_state()
             self._prepare_storage()
             self._setup_gpio()
             self._running = True
@@ -147,6 +166,15 @@ class CycleMonitor:
         reference_time = (reference or datetime.now(timezone.utc)).astimezone()
         with self._lock:
             self._counter.configure(reference_time, 0)
+            self._counter_initialized = True
+        try:
+            save_cycle_state(
+                self.config.machine_id,
+                last_cycle=0,
+                last_timestamp=reference_time,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            LOGGER.exception("Failed to persist manual reset state for %s", self.config.machine_id)
         LOGGER.info(
             "Cycle counter manually reset; next cycle will start at 1 using %s as reference",
             reference_time.isoformat(),
@@ -246,6 +274,9 @@ class CycleMonitor:
         """
 
         timestamp = datetime.now(timezone.utc).astimezone()
+        with self._lock:
+            if not self._counter_initialized:
+                self._restore_counter_state()
         self._record_event(timestamp)
         with self._lock:
             self._stats.last_event_time = timestamp
@@ -274,13 +305,20 @@ class CycleMonitor:
             except OSError:
                 LOGGER.exception("Failed to initialize CSV file at %s", csv_path)
                 raise
-            reference = datetime.now(timezone.utc).astimezone()
-            self._counter.configure(reference, 0)
+            if not self._counter_initialized:
+                reference = datetime.now(timezone.utc).astimezone()
+                self._counter.configure(reference, 0)
+                self._counter_initialized = True
             self._csv_initialized = True
             return
 
-        if not self._ensure_migrated(csv_path):
-            return
+        seed = self._ensure_migrated(csv_path)
+        if seed and not self._counter_initialized:
+            reference, last_count = seed
+            if reference.tzinfo is None:
+                reference = reference.replace(tzinfo=timezone.utc)
+            self._counter.configure(reference.astimezone(), last_count)
+            self._counter_initialized = True
 
         last_timestamp: Optional[datetime] = None
         last_count = 0
@@ -294,8 +332,10 @@ class CycleMonitor:
                     with csv_path.open("w", newline="") as new_csv:
                         writer = csv.writer(new_csv)
                         writer.writerow(self._csv_header)
-                    reference = datetime.now(timezone.utc).astimezone()
-                    self._counter.configure(reference, 0)
+                    if not self._counter_initialized:
+                        reference = datetime.now(timezone.utc).astimezone()
+                        self._counter.configure(reference, 0)
+                        self._counter_initialized = True
                     self._csv_initialized = True
                     return
                 for row in reader:
@@ -314,12 +354,16 @@ class CycleMonitor:
             LOGGER.exception("Failed to read existing CSV file %s", csv_path)
             raise
 
-        reference = last_timestamp or datetime.now(timezone.utc).astimezone()
-        self._counter.configure(reference, last_count)
+        if not self._counter_initialized:
+            reference = last_timestamp or datetime.now(timezone.utc).astimezone()
+            if reference.tzinfo is None:
+                reference = reference.replace(tzinfo=timezone.utc)
+            self._counter.configure(reference.astimezone(), last_count)
+            self._counter_initialized = True
         self._csv_initialized = True
         self._load_pending_rows()
 
-    def _ensure_migrated(self, csv_path: Path) -> bool:
+    def _ensure_migrated(self, csv_path: Path) -> Optional[tuple[datetime, int]]:
         try:
             with csv_path.open("r", newline="") as csv_file:
                 reader = csv.reader(csv_file)
@@ -337,13 +381,11 @@ class CycleMonitor:
                 LOGGER.exception("Failed to write header to empty CSV %s", csv_path)
                 raise
             reference = datetime.now(timezone.utc).astimezone()
-            self._counter.configure(reference, 0)
-            self._csv_initialized = True
-            return False
+            return (reference, 0)
 
         header, data_rows = rows[0], rows[1:]
         if header == self._csv_header:
-            return True
+            return None
 
         LOGGER.info("Migrating CSV file %s to include cycle numbers", csv_path)
         counter = _CycleCounter()
@@ -374,13 +416,10 @@ class CycleMonitor:
                 last_timestamp = datetime.fromisoformat(ts_str)
             except ValueError:
                 last_timestamp = datetime.now(timezone.utc).astimezone()
-            self._counter.configure(last_timestamp, int(last_cycle))
+            return (last_timestamp, int(last_cycle))
         else:
             reference = datetime.now(timezone.utc).astimezone()
-            self._counter.configure(reference, 0)
-
-        self._csv_initialized = True
-        return False
+            return (reference, 0)
 
     def _record_event(self, timestamp: datetime) -> Optional[int]:
         try:
@@ -396,6 +435,14 @@ class CycleMonitor:
             LOGGER.warning(
                 "Cycle #%s queued locally; CSV %s is currently unavailable", cycle_number, csv_path
             )
+        try:
+            save_cycle_state(
+                self.config.machine_id,
+                last_cycle=cycle_number,
+                last_timestamp=timestamp,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            LOGGER.exception("Failed to persist cycle state for %s", self.config.machine_id)
         return cycle_number
 
     # -----------------

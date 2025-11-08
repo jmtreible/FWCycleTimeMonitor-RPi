@@ -9,7 +9,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 - **Simple GUI**: Tkinter-based interface to configure hardware settings, start/stop monitoring, and log test events without hardware.
 - **Raspberry Pi ready**: Uses `RPi.GPIO` (with the modern `lgpio` backend) for hardware access and is packaged for straightforward installation.
 - **Isolated runtime**: The installer provisions a dedicated Python virtual environment so GPIO dependencies remain consistent across Raspberry Pi OS releases.
-- **Cycle counter support**: Every event updates a per-machine counter that automatically resets to 1 at 3 AM each day.
+- **Cycle counter support**: Every event updates a per-machine counter that persists across restarts and resets to 1 at a configurable time (3 AM by default).
 - **Resilient logging**: If a CSV is temporarily locked (e.g., opened from another workstation), events are queued locally and flushed once access is restored.
 - **Guided installation**: A one-command installer prepares dependencies, configures the network share, enables the boot service, and drops a desktop shortcut for the GUI that auto-activates the managed virtual environment.
 - **Auto-start support**: Example `systemd` unit file for launching on boot.
@@ -147,9 +147,10 @@ fw-cycle-monitor-launcher
 
 - **Machine ID**: Text identifier (e.g. `M201`). Used in the CSV file name and log entries.
 - **GPIO Pin (BCM)**: Input pin that receives the 3.3 V mold close signal (BCM numbering).
-- **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`, and cycle numbers reset to 1 every day at 3 AM.
+- **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`.
+- **Reset Hour (0–23)**: Local hour when the cycle counter resets back to 1. The default is `3`, meaning the first cycle logged on or after 3 AM becomes cycle 1.
 
-The application persists settings to `~/.config/fw_cycle_monitor/config.json`.
+The application persists settings to `~/.config/fw_cycle_monitor/config.json` and stores the live per-machine cycle counters in `~/.config/fw_cycle_monitor/state.json` so counts survive restarts and CSV maintenance performed by other systems.
 
 > If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue and automatically appended once the file becomes writable again.
 

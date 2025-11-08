@@ -30,6 +30,7 @@ class Application(tk.Tk):
         self._machine_var = tk.StringVar(value=self._config.machine_id)
         self._pin_var = tk.StringVar(value=str(self._config.gpio_pin))
         self._directory_var = tk.StringVar(value=str(self._config.csv_directory))
+        self._reset_hour_var = tk.StringVar(value=str(self._config.reset_hour))
         self._status_var = tk.StringVar(value="Stopped")
         self._last_event_var = tk.StringVar(value="—")
         self._events_logged_var = tk.StringVar(value="0")
@@ -54,10 +55,13 @@ class Application(tk.Tk):
         directory_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Browse…", command=self._select_directory).grid(row=2, column=2, padx=(8, 0), pady=(8, 0))
 
+        ttk.Label(frame, text="Reset Hour (0–23)").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(frame, textvariable=self._reset_hour_var, width=20).grid(row=3, column=1, sticky="ew", pady=(8, 0))
+
         frame.columnconfigure(1, weight=1)
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=3, column=0, columnspan=3, pady=(16, 0), sticky="ew")
+        button_frame.grid(row=4, column=0, columnspan=3, pady=(16, 0), sticky="ew")
         self._start_button = ttk.Button(button_frame, text="Start Monitoring", command=self._start_monitor)
         self._start_button.grid(row=0, column=0, padx=(0, 8))
         self._stop_button = ttk.Button(button_frame, text="Stop", command=self._stop_monitor, state=tk.DISABLED)
@@ -65,7 +69,7 @@ class Application(tk.Tk):
         ttk.Button(button_frame, text="Log Test Event", command=self._log_test_event).grid(row=0, column=2)
 
         status_frame = ttk.LabelFrame(frame, text="Status", padding=12)
-        status_frame.grid(row=4, column=0, columnspan=3, pady=(16, 0), sticky="ew")
+        status_frame.grid(row=5, column=0, columnspan=3, pady=(16, 0), sticky="ew")
 
         ttk.Label(status_frame, text="State:").grid(row=0, column=0, sticky="w")
         ttk.Label(status_frame, textvariable=self._status_var).grid(row=0, column=1, sticky="w")
@@ -78,7 +82,7 @@ class Application(tk.Tk):
 
         version = self._resolve_version()
         ttk.Label(frame, text=f"Version: {version}", foreground="#555555").grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(16, 0)
+            row=6, column=0, columnspan=3, sticky="w", pady=(16, 0)
         )
 
     # Actions ---------------------------------------------------------
@@ -166,7 +170,19 @@ class Application(tk.Tk):
         csv_directory = Path(self._directory_var.get()).expanduser()
         if not csv_directory:
             raise ValueError("CSV directory is required")
-        return AppConfig(machine_id=machine_id, gpio_pin=gpio_pin, csv_directory=csv_directory)
+        try:
+            reset_hour = int(self._reset_hour_var.get())
+        except ValueError as exc:
+            raise ValueError("Reset hour must be an integer between 0 and 23") from exc
+        if not 0 <= reset_hour <= 23:
+            raise ValueError("Reset hour must be between 0 and 23")
+
+        return AppConfig(
+            machine_id=machine_id,
+            gpio_pin=gpio_pin,
+            csv_directory=csv_directory,
+            reset_hour=reset_hour,
+        )
 
     def _resolve_version(self) -> str:
         try:
