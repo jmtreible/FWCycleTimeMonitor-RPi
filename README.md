@@ -131,7 +131,7 @@ python -m fw_cycle_monitor
 
 You can also use the **FW Cycle Monitor** desktop shortcut that the installer places on the Raspberry Pi desktop. Internally it calls `run_in_venv.sh` with the GUI entry point.
 
-> The `fw-cycle-monitor` and `fw-cycle-monitor-launcher` command shims, the systemd unit, and the desktop shortcut all activate the virtual environment automatically before executing Python modules.
+> The `fw-cycle-monitor`, `fw-cycle-monitor-launcher`, and `fw-cycle-monitor-daemon` command shims, along with the systemd unit and the desktop shortcut, all activate the virtual environment automatically before executing Python modules.
 
 ### Launch with update checks
 
@@ -159,7 +159,7 @@ Use the **Log Test Event** button to append a simulated timestamp to the configu
 
 ## Auto-start with systemd
 
-An example service file is provided under `systemd/fw-cycle-monitor.service`. Adjust the `User` (default `pi`) and the paths to match your deployment (the template assumes the project lives in `/opt/fw-cycle-monitor` and runs the launcher with the managed virtual environment’s Python interpreter), then install and enable it:
+An example service file is provided under `systemd/fw-cycle-monitor.service`. Adjust the `User` (default `pi`) and the paths to match your deployment (the template assumes the project lives in `/opt/fw-cycle-monitor` and runs the headless service runner with the managed virtual environment’s Python interpreter), then install and enable it:
 
 ```bash
 sudo cp systemd/fw-cycle-monitor.service /etc/systemd/system/
@@ -168,7 +168,7 @@ sudo systemctl enable fw-cycle-monitor.service
 sudo systemctl start fw-cycle-monitor.service
 ```
 
-The service uses the update-aware launcher so the Pi automatically pulls the latest code before starting the GUI at boot.
+The service uses the headless `fw_cycle_monitor.service_runner` module so it can operate without a desktop session while still honouring the GUI-managed configuration.
 
 > The automated installer already deploys and enables a tailored unit at `/etc/systemd/system/fw-cycle-monitor.service`. Use the steps above only if you need to perform a custom/manual deployment.
 

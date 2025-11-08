@@ -130,8 +130,16 @@ SHIM
 exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor.launcher "$@"
 SHIM
 
-    sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
-    chmod +x "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
+    cat > "${shim_dir}/fw-cycle-monitor-daemon" <<'SHIM'
+#!/usr/bin/env bash
+exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor.service_runner "$@"
+SHIM
+
+    sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
+        "${shim_dir}/fw-cycle-monitor" \
+        "${shim_dir}/fw-cycle-monitor-launcher" \
+        "${shim_dir}/fw-cycle-monitor-daemon"
+    chmod +x "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher" "${shim_dir}/fw-cycle-monitor-daemon"
 }
 
 deploy_repository() {
@@ -229,7 +237,7 @@ Type=simple
 User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
-ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.launcher
+ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.service_runner
 Restart=on-failure
 RestartSec=5
 
@@ -258,6 +266,6 @@ configure_service
 
 echo "\nInstallation complete!"
 printf 'The FW Cycle Monitor GUI can be launched from the desktop shortcut or via "%s/.venv/bin/python -m fw_cycle_monitor".\n' "${INSTALL_DIR}"
-printf 'Command shims (fw-cycle-monitor, fw-cycle-monitor-launcher) invoke the virtual environment.\n'
+printf 'Command shims (fw-cycle-monitor, fw-cycle-monitor-launcher, fw-cycle-monitor-daemon) invoke the virtual environment.\n'
 printf 'The monitoring service is managed by systemd as "fw-cycle-monitor.service".\n'
 
