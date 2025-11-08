@@ -4,13 +4,32 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict
 
 LOGGER = logging.getLogger(__name__)
 
-CONFIG_DIR = Path.home() / ".config" / "fw_cycle_monitor"
+
+def _determine_config_dir() -> Path:
+    """Return the directory used for configuration and state files.
+
+    When ``FW_CYCLE_MONITOR_CONFIG_DIR`` is defined the application stores
+    configuration and runtime state in that directory.  This keeps the GUI and
+    background service aligned even if they execute under different user
+    accounts (for example, when systemd launches the service at boot).  The
+    installer sets the variable automatically, but the code falls back to the
+    traditional per-user location for manual deployments.
+    """
+
+    override = os.environ.get("FW_CYCLE_MONITOR_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".config" / "fw_cycle_monitor"
+
+
+CONFIG_DIR = _determine_config_dir()
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 

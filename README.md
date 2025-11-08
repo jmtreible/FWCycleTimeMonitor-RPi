@@ -150,7 +150,13 @@ fw-cycle-monitor-launcher
 - **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`.
 - **Reset Hour (0–23)**: Local hour when the cycle counter resets back to 1. The default is `3`, meaning the first cycle logged on or after 3 AM becomes cycle 1.
 
-The application persists settings to `~/.config/fw_cycle_monitor/config.json` and stores the live per-machine cycle counters in `~/.config/fw_cycle_monitor/state.json` so counts survive restarts and CSV maintenance performed by other systems.
+The application persists settings to `~/.config/fw_cycle_monitor/config.json` and stores the live per-machine cycle counters in `~/.config/fw_cycle_monitor/state.json`. A mirrored copy of the latest counter is also written beside each CSV as `CM_<MachineID>.csv.state.json` so the monitor can recover even if the configuration directory is reset or the service and GUI momentarily disagree on their storage paths. During automated installations the helper script exports `FW_CYCLE_MONITOR_CONFIG_DIR` so both the GUI and the systemd service share the same directory (for example `/home/pi1/.config/fw_cycle_monitor`), which keeps the persisted cycle numbers aligned after reboots.
+
+To inspect the stored cycle numbers manually, open the `state.json` file in that directory (or the per-machine `*.csv.state.json` sidecar). Each machine ID retains the `last_cycle` that was written along with the timestamp of the most recent event. When debugging persistence, confirm that:
+
+1. The `fw-cycle-monitor.service` systemd unit is running as the same user recorded in the installer output (or adjust the `User=` field to the correct account and run `sudo systemctl daemon-reload`).
+2. The `FW_CYCLE_MONITOR_CONFIG_DIR` environment variable in the unit file points to the same directory the GUI uses. After editing, restart the service and monitor the logs with `journalctl -u fw-cycle-monitor.service` to verify that the monitor reports the restored `last_cycle` number on startup.
+3. The CSV directory contains the matching `CM_<MachineID>.csv.state.json` sidecar. If a maintenance process clears old CSV logs, leave the sidecar file in place so the next monitor session can resume from the most recent counter.
 
 > If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue and automatically appended once the file becomes writable again.
 

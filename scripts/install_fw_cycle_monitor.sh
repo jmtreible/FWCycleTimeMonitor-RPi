@@ -17,6 +17,7 @@ VENV_BIN="${VENV_DIR}/bin"
 ACTIVATE="${VENV_BIN}/activate"
 DESKTOP_NAME="FW Cycle Monitor.desktop"
 MOUNT_POINT="${INSTALL_HOME}/FWCycle"
+CONFIG_HOME="${INSTALL_HOME}/.config/fw_cycle_monitor"
 FSTAB_LINE="//192.168.0.249/Apps/FWCycle ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
 APT_PACKAGES=(python3 python3-pip python3-venv python3-tk git cifs-utils rsync xdg-user-dirs)
 
@@ -96,6 +97,7 @@ ensure_venv_launcher() {
 set -euo pipefail
 
 ACTIVATE_PATH="__ACTIVATE__"
+CONFIG_HOME="__CONFIG_HOME__"
 if [[ ! -f "${ACTIVATE_PATH}" ]]; then
     echo "Missing virtual environment activate script at ${ACTIVATE_PATH}" >&2
     exit 1
@@ -104,6 +106,8 @@ fi
 # shellcheck disable=SC1090
 source "${ACTIVATE_PATH}"
 
+export FW_CYCLE_MONITOR_CONFIG_DIR="${CONFIG_HOME}"
+
 if [[ $# -eq 0 ]]; then
     exec "$SHELL"
 else
@@ -111,7 +115,10 @@ else
 fi
 SCRIPT
 
-    sed -i "s|__ACTIVATE__|${ACTIVATE}|g" "${INSTALL_DIR}/run_in_venv.sh"
+    sed -i \
+        -e "s|__ACTIVATE__|${ACTIVATE}|g" \
+        -e "s|__CONFIG_HOME__|${CONFIG_HOME}|g" \
+        "${INSTALL_DIR}/run_in_venv.sh"
     chmod +x "${INSTALL_DIR}/run_in_venv.sh"
 }
 
@@ -237,6 +244,7 @@ Type=simple
 User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
+Environment=FW_CYCLE_MONITOR_CONFIG_DIR=${CONFIG_HOME}
 ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.service_runner
 Restart=on-failure
 RestartSec=5
@@ -259,6 +267,9 @@ ensure_venv_launcher
 ensure_cli_shims
 configure_network_share
 create_desktop_entry
+
+mkdir -p "${CONFIG_HOME}"
+chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${CONFIG_HOME}"
 
 chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
 

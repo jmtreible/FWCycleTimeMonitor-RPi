@@ -13,6 +13,9 @@ from .config import CONFIG_DIR, ensure_config_dir
 LOGGER = logging.getLogger(__name__)
 
 STATE_PATH = CONFIG_DIR / "state.json"
+_STATE_TMP_SUFFIX = ".tmp"
+
+__all__ = ["MachineState", "load_cycle_state", "save_cycle_state", "clear_cycle_state"]
 
 
 @dataclass
@@ -36,10 +39,16 @@ def _load_state_blob() -> Dict[str, Any]:
 
 def _save_state_blob(data: Dict[str, Any]) -> None:
     ensure_config_dir()
+    tmp_path = STATE_PATH.with_suffix(STATE_PATH.suffix + _STATE_TMP_SUFFIX)
     try:
-        STATE_PATH.write_text(json.dumps(data, indent=2))
+        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.replace(STATE_PATH)
     except OSError:
         LOGGER.exception("Unable to persist cycle state to %s", STATE_PATH)
+        try:
+            tmp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except OSError:
+            LOGGER.debug("Failed to remove temporary state file %s", tmp_path, exc_info=True)
 
 
 def load_cycle_state(machine_id: str) -> Optional[MachineState]:
@@ -48,10 +57,12 @@ def load_cycle_state(machine_id: str) -> Optional[MachineState]:
     data = _load_state_blob()
     machines = data.get("machines")
     if not isinstance(machines, dict):
+        LOGGER.debug("State file %s does not contain machine mapping", STATE_PATH)
         return None
 
     raw_state = machines.get(machine_id)
     if not isinstance(raw_state, dict):
+        LOGGER.debug("No stored state found for machine %s", machine_id)
         return None
 
     try:
@@ -62,6 +73,12 @@ def load_cycle_state(machine_id: str) -> Optional[MachineState]:
         LOGGER.warning("State for %s is invalid; ignoring", machine_id)
         return None
 
+    LOGGER.info(
+        "Restored cycle state for %s: last_cycle=%s at %s",
+        machine_id,
+        last_cycle,
+        last_timestamp.isoformat(),
+    )
     return MachineState(machine_id=machine_id, last_cycle=last_cycle, last_timestamp=last_timestamp)
 
 
@@ -80,6 +97,13 @@ def save_cycle_state(machine_id: str, *, last_cycle: int, last_timestamp: dateti
     }
 
     _save_state_blob(data)
+    LOGGER.debug(
+        "Persisted cycle state for %s to %s (cycle=%s, timestamp=%s)",
+        machine_id,
+        STATE_PATH,
+        last_cycle,
+        last_timestamp.isoformat(),
+    )
 
 
 def clear_cycle_state(machine_id: str) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import threading
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import AppConfig
-from .state import load_cycle_state, save_cycle_state
+from .state import MachineState, load_cycle_state, save_cycle_state
 
 LOGGER = logging.getLogger(__name__)
 
@@ -116,17 +117,57 @@ class CycleMonitor:
     def _restore_counter_state(self) -> None:
         """Initialise the cycle counter from persisted state if available."""
 
-        state = load_cycle_state(self.config.machine_id)
-        if not state:
+        persisted_state = load_cycle_state(self.config.machine_id)
+        sidecar_state = self._load_sidecar_state()
+
+        chosen_state: Optional[MachineState]
+        if persisted_state and sidecar_state:
+            if sidecar_state.last_timestamp > persisted_state.last_timestamp:
+                LOGGER.info(
+                    "Using sidecar state for %s (more recent than config directory)",
+                    self.config.machine_id,
+                )
+                chosen_state = sidecar_state
+                try:
+                    save_cycle_state(
+                        self.config.machine_id,
+                        last_cycle=sidecar_state.last_cycle,
+                        last_timestamp=sidecar_state.last_timestamp,
+                    )
+                except Exception:
+                    LOGGER.exception(
+                        "Failed to sync sidecar state back to config directory for %s",
+                        self.config.machine_id,
+                    )
+            else:
+                LOGGER.debug(
+                    "Using config directory state for %s; sidecar timestamp=%s",
+                    self.config.machine_id,
+                    sidecar_state.last_timestamp.isoformat(),
+                )
+                chosen_state = persisted_state
+                self._persist_sidecar_state(
+                    persisted_state.last_cycle, persisted_state.last_timestamp
+                )
+        else:
+            chosen_state = persisted_state or sidecar_state
+
+        if not chosen_state:
+            LOGGER.debug("No persisted cycle state to restore for %s", self.config.machine_id)
             self._counter_initialized = False
             return
 
-        reference = state.last_timestamp
+        reference = chosen_state.last_timestamp
         if reference.tzinfo is None:
             reference = reference.replace(tzinfo=timezone.utc)
         reference = reference.astimezone()
 
-        self._counter.configure(reference, state.last_cycle)
+        LOGGER.info(
+            "Initialising cycle counter from persisted state: machine=%s last_cycle=%s",
+            self.config.machine_id,
+            chosen_state.last_cycle,
+        )
+        self._counter.configure(reference, chosen_state.last_cycle)
         self._counter_initialized = True
 
     def start(self) -> None:
@@ -175,6 +216,7 @@ class CycleMonitor:
             )
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.exception("Failed to persist manual reset state for %s", self.config.machine_id)
+        self._persist_sidecar_state(0, reference_time)
         LOGGER.info(
             "Cycle counter manually reset; next cycle will start at 1 using %s as reference",
             reference_time.isoformat(),
@@ -443,6 +485,7 @@ class CycleMonitor:
             )
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.exception("Failed to persist cycle state for %s", self.config.machine_id)
+        self._persist_sidecar_state(cycle_number, timestamp)
         return cycle_number
 
     # -----------------
@@ -506,3 +549,61 @@ class CycleMonitor:
                 self._pending_rows = rows_to_write
                 self._persist_pending_rows()
                 return False
+
+    # -----------------
+    # Sidecar state persistence
+
+    def _state_sidecar_path(self) -> Path:
+        csv_path = self.config.csv_path()
+        return csv_path.with_name(csv_path.name + ".state.json")
+
+    def _load_sidecar_state(self) -> Optional[MachineState]:
+        sidecar = self._state_sidecar_path()
+        if not sidecar.exists():
+            return None
+        try:
+            payload = json.loads(sidecar.read_text())
+        except (OSError, json.JSONDecodeError):
+            LOGGER.warning("Failed to read sidecar state from %s", sidecar, exc_info=True)
+            return None
+
+        try:
+            last_cycle = int(payload["last_cycle"])
+            timestamp = datetime.fromisoformat(payload["last_timestamp"])
+        except (KeyError, ValueError, TypeError):
+            LOGGER.warning("Sidecar state at %s is invalid", sidecar)
+            return None
+
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return MachineState(
+            machine_id=self.config.machine_id,
+            last_cycle=last_cycle,
+            last_timestamp=timestamp,
+        )
+
+    def _persist_sidecar_state(self, last_cycle: int, timestamp: datetime) -> None:
+        sidecar = self._state_sidecar_path()
+        try:
+            sidecar.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            LOGGER.exception("Unable to create directory for sidecar state %s", sidecar)
+            return
+
+        payload = {
+            "last_cycle": int(last_cycle),
+            "last_timestamp": timestamp.isoformat(),
+        }
+        suffix = sidecar.suffix
+        tmp_path = (
+            sidecar.with_suffix(suffix + ".tmp") if suffix else sidecar.with_name(sidecar.name + ".tmp")
+        )
+        try:
+            tmp_path.write_text(json.dumps(payload))
+            tmp_path.replace(sidecar)
+        except OSError:
+            LOGGER.exception("Failed to persist sidecar state to %s", sidecar)
+            try:
+                tmp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+            except OSError:
+                LOGGER.debug("Failed to remove temporary sidecar file %s", tmp_path, exc_info=True)
