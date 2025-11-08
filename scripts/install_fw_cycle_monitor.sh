@@ -18,7 +18,7 @@ ACTIVATE="${VENV_BIN}/activate"
 DESKTOP_NAME="FW Cycle Monitor.desktop"
 MOUNT_POINT="${INSTALL_HOME}/FWCycle"
 FSTAB_LINE="//192.168.0.249/Apps/FWCycle ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
-APT_PACKAGES=(python3 python3-pip python3-venv python3-tk git cifs-utils rsync)
+APT_PACKAGES=(python3 python3-pip python3-venv python3-tk git cifs-utils rsync xdg-user-dirs)
 
 printf '\n=== FW Cycle Monitor Installer ===\n'
 printf 'Detected user: %s\n' "${INSTALL_USER}"
@@ -159,6 +159,8 @@ create_desktop_entry() {
     if [[ -z "${desktop_dir}" ]]; then
         desktop_dir="${INSTALL_HOME}/Desktop"
     fi
+
+    echo "Using desktop directory: ${desktop_dir}"
 
     if [[ ! -d "${desktop_dir}" ]]; then
         echo "Desktop directory ${desktop_dir} not found; creating it."

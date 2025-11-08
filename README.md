@@ -57,7 +57,7 @@ A lightweight Raspberry Pi application that logs mold close events for injection
 
    The script performs the following actions:
 
-   - Installs required APT packages (`python3`, `python3-venv`, `python3-tk`, `git`, `cifs-utils`, `rsync`, etc.).
+   - Installs required APT packages (`python3`, `python3-venv`, `python3-tk`, `git`, `cifs-utils`, `rsync`, `xdg-user-dirs`, etc.).
    - Copies the repository to `/opt/fw-cycle-monitor` so the auto-updater has a stable working tree.
    - Provisions a Python virtual environment at `/opt/fw-cycle-monitor/.venv`, shares system GPIO bindings, and installs `fw-cycle-monitor[raspberrypi]` (including `RPi.GPIO`, `lgpio`, and `rpi-lgpio`).
    - Verifies the GPIO libraries import successfully inside the managed environment so edge detection is ready immediately after install.
