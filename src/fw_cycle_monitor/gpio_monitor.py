@@ -90,6 +90,8 @@ class CycleMonitor:
         self._counter = _CycleCounter()
         self._csv_initialized = False
         self._csv_header = ["cycle_number", "machine_id", "timestamp"]
+        self._pending_rows: list[list[str]] = []
+        self._pending_loaded = False
 
     @property
     def stats(self) -> MonitorStats:
@@ -206,6 +208,8 @@ class CycleMonitor:
 
     def _prepare_storage(self) -> None:
         if self._csv_initialized:
+            if not self._pending_loaded:
+                self._load_pending_rows()
             return
         csv_path = self.config.csv_path()
         try:
@@ -265,6 +269,7 @@ class CycleMonitor:
         reference = last_timestamp or datetime.now(timezone.utc).astimezone()
         self._counter.configure(reference, last_count)
         self._csv_initialized = True
+        self._load_pending_rows()
 
     def _ensure_migrated(self, csv_path: Path) -> bool:
         try:
@@ -338,13 +343,71 @@ class CycleMonitor:
 
         cycle_number = self._counter.record(timestamp)
         csv_path = self.config.csv_path()
-        try:
-            with csv_path.open("a", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow([cycle_number, self.config.machine_id, timestamp.isoformat()])
-            LOGGER.debug("Logged cycle #%s at %s to %s", cycle_number, timestamp.isoformat(), csv_path)
-        except OSError:
-            LOGGER.exception("Failed to write cycle event to %s", csv_path)
-            return None
-
+        row = [str(cycle_number), self.config.machine_id, timestamp.isoformat()]
+        if not self._append_with_retry(csv_path, row):
+            LOGGER.warning(
+                "Cycle #%s queued locally; CSV %s is currently unavailable", cycle_number, csv_path
+            )
         return cycle_number
+
+    # -----------------
+    # Pending row logic
+
+    def _spool_path(self) -> Path:
+        csv_path = self.config.csv_path()
+        return csv_path.with_name(csv_path.name + ".pending")
+
+    def _load_pending_rows(self) -> None:
+        if self._pending_loaded:
+            return
+        spool_path = self._spool_path()
+        if spool_path.exists():
+            try:
+                with spool_path.open("r", newline="") as spool_file:
+                    reader = csv.reader(spool_file)
+                    for row in reader:
+                        if len(row) >= 3:
+                            self._pending_rows.append(row[:3])
+            except OSError:
+                LOGGER.exception("Failed to read pending events from %s", spool_path)
+        self._pending_loaded = True
+
+    def _persist_pending_rows(self) -> None:
+        spool_path = self._spool_path()
+        if not self._pending_rows:
+            if spool_path.exists():
+                try:
+                    spool_path.unlink()
+                except OSError:
+                    LOGGER.debug("Unable to remove empty spool file %s", spool_path, exc_info=True)
+            return
+        try:
+            with spool_path.open("w", newline="") as spool_file:
+                writer = csv.writer(spool_file)
+                writer.writerows(self._pending_rows)
+        except OSError:
+            LOGGER.exception("Failed to persist pending events to %s", spool_path)
+
+    def _append_with_retry(self, csv_path: Path, new_row: list[str]) -> bool:
+        with self._lock:
+            if not self._pending_loaded:
+                self._load_pending_rows()
+            rows_to_write = [row for row in self._pending_rows]
+            rows_to_write.append(new_row)
+            try:
+                with csv_path.open("a", newline="") as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerows(rows_to_write)
+                self._pending_rows.clear()
+                self._persist_pending_rows()
+                LOGGER.debug(
+                    "Logged cycle #%s at %s to %s", new_row[0], new_row[2], csv_path
+                )
+                return True
+            except OSError:
+                LOGGER.warning(
+                    "CSV file %s is busy; queueing cycle #%s for retry", csv_path, new_row[0]
+                )
+                self._pending_rows = rows_to_write
+                self._persist_pending_rows()
+                return False

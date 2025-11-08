@@ -13,7 +13,7 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
-raspberrypi = ["RPi.GPIO"]
+raspberrypi = ["RPi.GPIO", "lgpio"]
 
 [project.scripts]
 fw-cycle-monitor = "fw_cycle_monitor.gui:main"

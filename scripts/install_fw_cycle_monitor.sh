@@ -12,9 +12,11 @@ INSTALL_USER="${SUDO_USER:-$(logname 2>/dev/null || id -un)}"
 INSTALL_GROUP="$(id -gn "${INSTALL_USER}")"
 INSTALL_HOME="$(eval echo "~${INSTALL_USER}")"
 INSTALL_DIR="/opt/fw-cycle-monitor"
+VENV_DIR="${INSTALL_DIR}/.venv"
+VENV_BIN="${VENV_DIR}/bin"
 DESKTOP_NAME="FW Cycle Monitor.desktop"
-MOUNT_POINT="${INSTALL_HOME}/Apps"
-FSTAB_LINE="//192.168.0.249/Apps ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
+MOUNT_POINT="${INSTALL_HOME}/FWCycle"
+FSTAB_LINE="//192.168.0.249/Apps/FWCycle ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
 APT_PACKAGES=(python3 python3-pip python3-venv python3-tk git cifs-utils rsync)
 
 printf '\n=== FW Cycle Monitor Installer ===\n'
@@ -28,17 +30,52 @@ install_apt_packages() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_PACKAGES[@]}"
 }
 
+create_virtualenv() {
+    if [[ -d "${VENV_DIR}" ]]; then
+        echo "Existing virtual environment detected at ${VENV_DIR}."
+    else
+        echo "Creating Python virtual environment at ${VENV_DIR}..."
+        python3 -m venv "${VENV_DIR}"
+    fi
+
+    if [[ ! -x "${VENV_BIN}/python" ]]; then
+        echo "Error: virtual environment at ${VENV_DIR} is missing its Python interpreter." >&2
+        exit 1
+    fi
+}
+
 install_python_package() {
-    echo "Installing Python package (fw-cycle-monitor)..."
-    PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install --upgrade pip
-    PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install "${REPO_DIR}[raspberrypi]"
+    echo "Installing Python package into ${VENV_DIR}..."
+    "${VENV_BIN}/python" -m pip install --upgrade pip wheel
+    "${VENV_BIN}/pip" install --upgrade "${INSTALL_DIR}[raspberrypi]"
+}
+
+ensure_cli_shims() {
+    echo "Creating command shims for virtual environment..."
+    local shim_dir="/usr/local/bin"
+    mkdir -p "${shim_dir}"
+
+    cat > "${shim_dir}/fw-cycle-monitor" <<'SHIM'
+#!/usr/bin/env bash
+exec "__VENV_BIN__/python" -m fw_cycle_monitor "$@"
+SHIM
+
+    cat > "${shim_dir}/fw-cycle-monitor-launcher" <<'SHIM'
+#!/usr/bin/env bash
+exec "__VENV_BIN__/python" -m fw_cycle_monitor.launcher "$@"
+SHIM
+
+    sed -i "s|__VENV_BIN__|${VENV_BIN}|g" "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
+    chmod +x "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher"
 }
 
 deploy_repository() {
     echo "Copying project files to ${INSTALL_DIR}..."
     mkdir -p "${INSTALL_DIR}"
-    rsync -a --delete --exclude "__pycache__" "${REPO_DIR}/" "${INSTALL_DIR}/"
-    chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
+    rsync -a --delete \
+        --exclude "__pycache__/" \
+        --exclude ".venv/" \
+        "${REPO_DIR}/" "${INSTALL_DIR}/"
 }
 
 configure_network_share() {
@@ -82,7 +119,7 @@ Version=1.0
 Type=Application
 Name=FW Cycle Monitor
 Comment=Launch the FW Cycle Monitor configuration GUI
-Exec=/usr/bin/env fw-cycle-monitor
+Exec=${VENV_BIN}/python -m fw_cycle_monitor
 Icon=${icon_path}
 Terminal=false
 Categories=Utility;
@@ -96,13 +133,6 @@ DESKTOP
 
 configure_service() {
     echo "Configuring systemd service..."
-    local launcher_path
-    launcher_path="$(command -v fw-cycle-monitor-launcher || true)"
-    if [[ -z "${launcher_path}" ]]; then
-        echo "Error: fw-cycle-monitor-launcher not found in PATH after installation." >&2
-        exit 1
-    fi
-
     cat > /etc/systemd/system/fw-cycle-monitor.service <<SERVICE
 [Unit]
 Description=FW Cycle Time Monitor
@@ -114,7 +144,8 @@ Type=simple
 User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
-ExecStart=${launcher_path}
+Environment=PATH=${VENV_BIN}:/usr/bin:/bin
+ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.launcher
 Restart=on-failure
 RestartSec=5
 
@@ -128,13 +159,19 @@ SERVICE
 }
 
 install_apt_packages
-install_python_package
 deploy_repository
+create_virtualenv
+install_python_package
+ensure_cli_shims
 configure_network_share
 create_desktop_entry
+
+chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
+
 configure_service
 
 echo "\nInstallation complete!"
-printf 'The FW Cycle Monitor GUI can be launched from the desktop shortcut or via "fw-cycle-monitor".\n'
+printf 'The FW Cycle Monitor GUI can be launched from the desktop shortcut or via "%s/.venv/bin/python -m fw_cycle_monitor".\n' "${INSTALL_DIR}"
+printf 'Command shims (fw-cycle-monitor, fw-cycle-monitor-launcher) invoke the virtual environment.\n'
 printf 'The monitoring service is managed by systemd as "fw-cycle-monitor.service".\n'
 
