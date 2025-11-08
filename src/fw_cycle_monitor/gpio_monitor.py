@@ -533,13 +533,17 @@ class CycleMonitor:
             LOGGER.exception("Failed to persist pending events to %s", spool_path)
 
     def _open_for_append(self, path: Path):
-        """Open ``path`` for appending with shared-friendly flags."""
+        """Open ``path`` for appending without blocking shared readers."""
 
-        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
         fd = os.open(path, flags, 0o664)
         try:
-            os.lseek(fd, 0, os.SEEK_END)
-            return os.fdopen(fd, "a", newline="")
+            handle = os.fdopen(fd, "a+", newline="")
+            try:
+                handle.seek(0, os.SEEK_END)
+            except OSError:
+                LOGGER.debug("Failed to seek to end of %s after opening", path, exc_info=True)
+            return handle
         except Exception:
             os.close(fd)
             raise
