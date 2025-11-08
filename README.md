@@ -172,6 +172,23 @@ The service uses the update-aware launcher so the Pi automatically pulls the lat
 
 > The automated installer already deploys and enables a tailored unit at `/etc/systemd/system/fw-cycle-monitor.service`. Use the steps above only if you need to perform a custom/manual deployment.
 
+### Diagnosing the systemd service
+
+If the unit fails to stay running after installation, you can reproduce the exact command that the service executes by using the `scripts/test_service_exec.sh` helper. The script parses the installed unit file, exports any `Environment=` variables, switches to the declared `WorkingDirectory`, and finally launches the `ExecStart` command as the configured service user. Run it with `sudo` so it can impersonate the target account:
+
+```bash
+sudo ./scripts/test_service_exec.sh
+```
+
+The helper streams the launcher’s output directly to your terminal so you can spot missing dependencies or display issues. Once the command exits, review the traditional systemd logs as well:
+
+```bash
+sudo systemctl status fw-cycle-monitor.service
+sudo journalctl -u fw-cycle-monitor.service
+```
+
+If the helper reports a missing user, update the `User=` line in `/etc/systemd/system/fw-cycle-monitor.service` to match the account that should own the monitor (for example, `pi1` instead of the default `pi`), run `sudo systemctl daemon-reload`, and start the service again.
+
 ## Packaging
 
 The project uses `pyproject.toml` with setuptools. Build distributables with:
