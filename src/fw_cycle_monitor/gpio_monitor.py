@@ -335,6 +335,7 @@ class CycleMonitor:
         csv_path = self.config.csv_path()
         try:
             Path(self.config.csv_directory).mkdir(parents=True, exist_ok=True)
+            self._ensure_shared_permissions(Path(self.config.csv_directory), directory=True)
         except OSError:
             LOGGER.exception("Failed to create CSV directory %s", self.config.csv_directory)
             raise
@@ -344,6 +345,7 @@ class CycleMonitor:
                 with csv_path.open("w", newline="") as csv_file:
                     writer = csv.writer(csv_file)
                     writer.writerow(self._csv_header)
+                self._ensure_shared_permissions(csv_path)
             except OSError:
                 LOGGER.exception("Failed to initialize CSV file at %s", csv_path)
                 raise
@@ -402,6 +404,7 @@ class CycleMonitor:
                 reference = reference.replace(tzinfo=timezone.utc)
             self._counter.configure(reference.astimezone(), last_count)
             self._counter_initialized = True
+        self._ensure_shared_permissions(csv_path)
         self._csv_initialized = True
         self._load_pending_rows()
 
@@ -523,6 +526,7 @@ class CycleMonitor:
             with spool_path.open("w", newline="") as spool_file:
                 writer = csv.writer(spool_file)
                 writer.writerows(self._pending_rows)
+            self._ensure_shared_permissions(spool_path, file_mode=0o660)
         except OSError:
             LOGGER.exception("Failed to persist pending events to %s", spool_path)
 
@@ -538,6 +542,7 @@ class CycleMonitor:
                     writer.writerows(rows_to_write)
                 self._pending_rows.clear()
                 self._persist_pending_rows()
+                self._ensure_shared_permissions(csv_path)
                 LOGGER.debug(
                     "Logged cycle #%s at %s to %s", new_row[0], new_row[2], csv_path
                 )
@@ -601,9 +606,23 @@ class CycleMonitor:
         try:
             tmp_path.write_text(json.dumps(payload))
             tmp_path.replace(sidecar)
+            self._ensure_shared_permissions(sidecar, file_mode=0o660)
         except OSError:
             LOGGER.exception("Failed to persist sidecar state to %s", sidecar)
             try:
                 tmp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
             except OSError:
                 LOGGER.debug("Failed to remove temporary sidecar file %s", tmp_path, exc_info=True)
+
+    def _ensure_shared_permissions(self, path: Path, file_mode: int = 0o664, directory: bool = False) -> None:
+        """Apply permissive permissions so other users can read the CSV output."""
+
+        if not path.exists():
+            return
+        mode = 0o775 if directory else file_mode
+        try:
+            current = path.stat().st_mode & 0o777
+            if current != mode:
+                path.chmod(mode)
+        except OSError:
+            LOGGER.debug("Unable to adjust permissions for %s", path, exc_info=True)

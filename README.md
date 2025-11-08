@@ -158,7 +158,7 @@ To inspect the stored cycle numbers manually, open the `state.json` file in that
 2. The `FW_CYCLE_MONITOR_CONFIG_DIR` environment variable in the unit file points to the same directory the GUI uses. After editing, restart the service and monitor the logs with `journalctl -u fw-cycle-monitor.service` to verify that the monitor reports the restored `last_cycle` number on startup.
 3. The CSV directory contains the matching `CM_<MachineID>.csv.state.json` sidecar. If a maintenance process clears old CSV logs, leave the sidecar file in place so the next monitor session can resume from the most recent counter.
 
-> If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue and automatically appended once the file becomes writable again.
+> If a CSV file is opened elsewhere (for example in Excel over the network share), new events are stored in a local queue and automatically appended once the file becomes writable again. The monitor also normalizes file permissions to `rw-rw-r--` so other users can read the logs while the Raspberry Pi retains write access.
 
 ### Test events without hardware
 
