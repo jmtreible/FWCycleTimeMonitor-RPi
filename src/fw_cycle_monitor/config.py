@@ -12,6 +12,12 @@ from typing import Any, Dict
 LOGGER = logging.getLogger(__name__)
 
 
+def _sanitize_machine_id(machine_id: str) -> str:
+    """Return a canonical machine identifier."""
+
+    return machine_id.strip().upper()
+
+
 def _determine_config_dir() -> Path:
     """Return the directory used for configuration and state files.
 
@@ -42,11 +48,16 @@ class AppConfig:
     csv_directory: Path = Path.home() / "fw_cycle_monitor_data"
     reset_hour: int = 3
 
+    def __post_init__(self) -> None:
+        self.machine_id = _sanitize_machine_id(self.machine_id)
+        if not isinstance(self.csv_directory, Path):
+            self.csv_directory = Path(self.csv_directory)
+
     def csv_path(self) -> Path:
         """Return the CSV path derived from the machine id."""
 
-        sanitized_machine = self.machine_id.strip().upper()
-        return Path(self.csv_directory) / f"CM_{sanitized_machine}.csv"
+        sanitized_machine = _sanitize_machine_id(self.machine_id)
+        return Path(self.csv_directory).expanduser() / f"CM_{sanitized_machine}.csv"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
@@ -60,7 +71,7 @@ class AppConfig:
             reset_hour = defaults.reset_hour
 
         return cls(
-            machine_id=data.get("machine_id", defaults.machine_id),
+            machine_id=_sanitize_machine_id(str(data.get("machine_id", defaults.machine_id))),
             gpio_pin=int(data.get("gpio_pin", defaults.gpio_pin)),
             csv_directory=csv_directory,
             reset_hour=reset_hour,
@@ -94,7 +105,64 @@ def save_config(config: AppConfig) -> None:
     """Persist configuration to disk."""
 
     ensure_config_dir()
+
+    previous_config: AppConfig | None = None
+    if CONFIG_PATH.exists():
+        try:
+            existing = json.loads(CONFIG_PATH.read_text())
+            previous_config = AppConfig.from_dict(existing)
+        except (json.JSONDecodeError, OSError, ValueError, TypeError):
+            LOGGER.debug("Existing configuration could not be loaded for comparison", exc_info=True)
+
     serializable = asdict(config)
     serializable["csv_directory"] = str(config.csv_directory)
     CONFIG_PATH.write_text(json.dumps(serializable, indent=2))
     LOGGER.debug("Saved config to %s", CONFIG_PATH)
+
+    if previous_config:
+        _handle_machine_change(previous_config, config)
+
+
+def _handle_machine_change(previous: AppConfig, current: AppConfig) -> None:
+    """Clean up state tied to a prior machine configuration."""
+
+    prev_machine = _sanitize_machine_id(previous.machine_id)
+    curr_machine = _sanitize_machine_id(current.machine_id)
+    prev_directory = Path(previous.csv_directory).expanduser()
+    curr_directory = Path(current.csv_directory).expanduser()
+
+    if prev_machine == curr_machine and prev_directory == curr_directory:
+        return
+
+    if prev_machine:
+        try:
+            from .state import clear_cycle_state
+
+            clear_cycle_state(prev_machine)
+        except Exception:  # pragma: no cover - defensive cleanup
+            LOGGER.debug("Unable to clear stored state for %s", prev_machine, exc_info=True)
+
+        _remove_machine_sidecars(prev_machine, prev_directory)
+
+
+def _remove_machine_sidecars(machine_id: str, csv_directory: Path) -> None:
+    """Delete stale pending/state files associated with ``machine_id``."""
+
+    sanitized = _sanitize_machine_id(machine_id)
+    if not sanitized:
+        return
+
+    csv_dir = csv_directory.expanduser()
+    base = csv_dir / f"CM_{sanitized}.csv"
+    targets = [
+        base.with_name(base.name + ".pending"),
+        base.with_name(base.name + ".state.json"),
+    ]
+
+    for path in targets:
+        try:
+            if path.exists():
+                path.unlink()
+                LOGGER.info("Removed stale file %s for retired machine %s", path, sanitized)
+        except OSError:
+            LOGGER.warning("Failed to remove stale file %s", path, exc_info=True)

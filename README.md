@@ -150,6 +150,7 @@ fw-cycle-monitor-launcher
 - **Machine ID**: Text identifier (e.g. `M201`). Used in the CSV file name and log entries.
 - **GPIO Pin (BCM)**: Input pin that receives the 3.3 V mold close signal (BCM numbering).
 - **CSV Directory**: Folder where CSV output is saved. Each machine logs to `CM_<MachineID>.csv` with headers `cycle_number,machine_id,timestamp`.
+-   When you change the machine ID or move the CSV directory, the application clears any pending queue/state files tied to the previous machine so retired identifiers (for example `M201`) no longer reappear with locked CSVs. Existing CSV logs are left intact so you can archive or delete them manually.
 - **Reset Hour (0–23)**: Local hour when the cycle counter resets back to 1. The default is `3`, meaning the first cycle logged on or after 3 AM becomes cycle 1.
 
 The application persists settings to `~/.config/fw_cycle_monitor/config.json` and stores the live per-machine cycle counters in `~/.config/fw_cycle_monitor/state.json`. A mirrored copy of the latest counter is also written beside each CSV as `CM_<MachineID>.csv.state.json` so the monitor can recover even if the configuration directory is reset or the service and GUI momentarily disagree on their storage paths. During automated installations the helper script exports `FW_CYCLE_MONITOR_CONFIG_DIR` so both the GUI and the systemd service share the same directory (for example `/home/pi1/.config/fw_cycle_monitor`), which keeps the persisted cycle numbers aligned after reboots.
