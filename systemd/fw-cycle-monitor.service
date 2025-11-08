@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/opt/fw-cycle-monitor
 Environment=FW_CYCLE_MONITOR_REPO=/opt/fw-cycle-monitor
-ExecStart=/opt/fw-cycle-monitor/run_in_venv.sh python -m fw_cycle_monitor.launcher
+ExecStart=/opt/fw-cycle-monitor/.venv/bin/python -m fw_cycle_monitor.launcher
 Restart=on-failure
 RestartSec=5
 

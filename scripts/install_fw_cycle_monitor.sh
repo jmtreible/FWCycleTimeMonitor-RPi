@@ -146,7 +146,20 @@ configure_network_share() {
 }
 
 create_desktop_entry() {
-    local desktop_dir="${INSTALL_HOME}/Desktop"
+    local desktop_dir=""
+
+    if command -v xdg-user-dir >/dev/null 2>&1; then
+        if command -v sudo >/dev/null 2>&1; then
+            desktop_dir="$(sudo -u "${INSTALL_USER}" xdg-user-dir DESKTOP 2>/dev/null || true)"
+        else
+            desktop_dir="$(su - "${INSTALL_USER}" -c 'xdg-user-dir DESKTOP' 2>/dev/null || true)"
+        fi
+    fi
+
+    if [[ -z "${desktop_dir}" ]]; then
+        desktop_dir="${INSTALL_HOME}/Desktop"
+    fi
+
     if [[ ! -d "${desktop_dir}" ]]; then
         echo "Desktop directory ${desktop_dir} not found; creating it."
         mkdir -p "${desktop_dir}"
@@ -174,7 +187,12 @@ DESKTOP
 
     chmod +x "${desktop_file}"
     chown "${INSTALL_USER}:${INSTALL_GROUP}" "${desktop_file}"
-    echo "Desktop shortcut created at ${desktop_file}."
+
+    if [[ -f "${desktop_file}" ]]; then
+        echo "Desktop shortcut created at ${desktop_file}."
+    else
+        echo "Warning: failed to create desktop shortcut at ${desktop_file}." >&2
+    fi
 }
 
 configure_service() {
@@ -190,8 +208,7 @@ Type=simple
 User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
-Environment=PATH=${VENV_BIN}:/usr/bin:/bin
-ExecStart=${INSTALL_DIR}/run_in_venv.sh python -m fw_cycle_monitor.launcher
+ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.launcher
 Restart=on-failure
 RestartSec=5
 

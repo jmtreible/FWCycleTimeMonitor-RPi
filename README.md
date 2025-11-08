@@ -159,7 +159,7 @@ Use the **Log Test Event** button to append a simulated timestamp to the configu
 
 ## Auto-start with systemd
 
-An example service file is provided under `systemd/fw-cycle-monitor.service`. Adjust the `User` (default `pi`) and the paths to match your deployment (the template assumes the project lives in `/opt/fw-cycle-monitor` and uses the generated `run_in_venv.sh` helper), then install and enable it:
+An example service file is provided under `systemd/fw-cycle-monitor.service`. Adjust the `User` (default `pi`) and the paths to match your deployment (the template assumes the project lives in `/opt/fw-cycle-monitor` and runs the launcher with the managed virtual environment’s Python interpreter), then install and enable it:
 
 ```bash
 sudo cp systemd/fw-cycle-monitor.service /etc/systemd/system/
