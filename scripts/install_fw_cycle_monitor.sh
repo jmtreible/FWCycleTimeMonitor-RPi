@@ -56,8 +56,27 @@ install_virtualenv_dependencies() {
     if ! "${VENV_BIN}/python" - <<'PY'
 import importlib
 
-for name in ("RPi.GPIO", "lgpio", "rpi_lgpio"):
-    importlib.import_module(name)
+required_modules = ("RPi.GPIO", "lgpio")
+missing = []
+for name in required_modules:
+    try:
+        importlib.import_module(name)
+    except ModuleNotFoundError:
+        missing.append(name)
+
+if missing:
+    raise ModuleNotFoundError(
+        "Missing required GPIO modules inside the virtual environment: " + ", ".join(missing)
+    )
+
+try:
+    importlib.import_module("rpi_lgpio")
+except ModuleNotFoundError:
+    print(
+        "Warning: optional module 'rpi_lgpio' is not available. "
+        "The fw-cycle-monitor package only requires RPi.GPIO for operation, "
+        "but the installer attempted to provide the pip extras as well."
+    )
 PY
     then
         echo "Error: Failed to import GPIO dependencies inside the virtual environment." >&2
