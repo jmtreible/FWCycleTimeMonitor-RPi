@@ -408,6 +408,7 @@ class CycleMonitor:
         self._ensure_shared_permissions(csv_path)
         self._csv_initialized = True
         self._load_pending_rows()
+        self._append_with_retry(csv_path)
 
     def _ensure_migrated(self, csv_path: Path) -> Optional[tuple[datetime, int]]:
         try:
@@ -527,14 +528,14 @@ class CycleMonitor:
             with spool_path.open("w", newline="") as spool_file:
                 writer = csv.writer(spool_file)
                 writer.writerows(self._pending_rows)
-            self._ensure_shared_permissions(spool_path, file_mode=0o660)
+            self._ensure_shared_permissions(spool_path, file_mode=0o664)
         except OSError:
             LOGGER.exception("Failed to persist pending events to %s", spool_path)
 
     def _open_for_append(self, path: Path):
         """Open ``path`` for appending with shared-friendly flags."""
 
-        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
         fd = os.open(path, flags, 0o664)
         try:
             os.lseek(fd, 0, os.SEEK_END)
@@ -543,12 +544,15 @@ class CycleMonitor:
             os.close(fd)
             raise
 
-    def _append_with_retry(self, csv_path: Path, new_row: list[str]) -> bool:
+    def _append_with_retry(self, csv_path: Path, new_row: Optional[list[str]] = None) -> bool:
         with self._lock:
             if not self._pending_loaded:
                 self._load_pending_rows()
             rows_to_write = [row for row in self._pending_rows]
-            rows_to_write.append(new_row)
+            if new_row is not None:
+                rows_to_write.append(new_row)
+            if not rows_to_write:
+                return True
             try:
                 with self._open_for_append(csv_path) as csv_file:
                     writer = csv.writer(csv_file)
@@ -556,14 +560,24 @@ class CycleMonitor:
                 self._pending_rows.clear()
                 self._persist_pending_rows()
                 self._ensure_shared_permissions(csv_path)
-                LOGGER.debug(
-                    "Logged cycle #%s at %s to %s", new_row[0], new_row[2], csv_path
-                )
+                if new_row is not None:
+                    LOGGER.debug(
+                        "Logged cycle #%s at %s to %s", new_row[0], new_row[2], csv_path
+                    )
+                else:
+                    LOGGER.debug("Flushed %s pending rows to %s", len(rows_to_write), csv_path)
                 return True
             except OSError:
-                LOGGER.warning(
-                    "CSV file %s is busy; queueing cycle #%s for retry", csv_path, new_row[0]
-                )
+                if new_row is not None:
+                    LOGGER.warning(
+                        "CSV file %s is busy; queueing cycle #%s for retry", csv_path, new_row[0],
+                        exc_info=True,
+                    )
+                else:
+                    LOGGER.warning(
+                        "CSV file %s is busy while flushing pending rows", csv_path,
+                        exc_info=True,
+                    )
                 self._pending_rows = rows_to_write
                 self._persist_pending_rows()
                 return False
