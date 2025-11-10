@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from .config import AppConfig, load_config
 from .gpio_monitor import CycleMonitor, GPIOUnavailableError
+from .updater import determine_repo_path, sync_environment, update_repository
 
 LOGGER = logging.getLogger(__name__)
 _STOP_EVENT = threading.Event()
@@ -42,11 +45,26 @@ def _summarize_config(config: AppConfig) -> str:
     )
 
 
+def _refresh_code() -> None:
+    repo_path = determine_repo_path(Path(__file__).resolve().parents[2])
+    extras = os.environ.get("FW_CYCLE_MONITOR_INSTALL_EXTRAS")
+
+    LOGGER.info("Ensuring repository at %s is up to date", repo_path)
+    if update_repository(repo_path):
+        LOGGER.info("Repository updated; refreshing Python package")
+        if not sync_environment(repo_path, extras):
+            LOGGER.warning(
+                "Failed to refresh installed package; the service may run with stale dependencies"
+            )
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    _refresh_code()
 
     config = load_config()
     LOGGER.info("Loaded configuration: %s", _summarize_config(config))
