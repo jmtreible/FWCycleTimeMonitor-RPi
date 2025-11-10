@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,28 @@ def _run_git_command(args: list[str], repo_path: Path) -> subprocess.CompletedPr
         text=True,
         env={**os.environ, "LC_ALL": "C"},
     )
+
+
+def determine_repo_path(default: Optional[Path] = None) -> Path:
+    """Return the path to the project repository.
+
+    Prefers the ``FW_CYCLE_MONITOR_REPO`` environment variable when set and
+    otherwise falls back to the provided default or the package directory.
+    """
+
+    repo_env = os.environ.get("FW_CYCLE_MONITOR_REPO")
+    if repo_env:
+        try:
+            return Path(repo_env).expanduser()
+        except (OSError, RuntimeError):
+            LOGGER.warning("Invalid FW_CYCLE_MONITOR_REPO value: %s", repo_env, exc_info=True)
+
+    if default is not None:
+        return default
+
+    # ``fw_cycle_monitor`` lives in ``src/fw_cycle_monitor`` so two parents up
+    # yields the repository root when running from an installed checkout.
+    return Path(__file__).resolve().parents[2]
 
 
 def update_repository(repo_path: Path, remote: str = "origin", branch: str = "main") -> bool:
@@ -82,3 +105,30 @@ def relaunch_if_updated(repo_path: Path, module: str) -> Optional[int]:
             LOGGER.exception("Failed to relaunch %s: %s", module, exc)
             return 1
     return None
+
+
+def sync_environment(repo_path: Path, extras: Optional[str] = None) -> bool:
+    """Reinstall the project into the active interpreter.
+
+    When the repository updates we need to refresh the site-packages copy of
+    the project so new modules and dependency pins are available.  This helper
+    issues a ``pip install --upgrade`` against the local checkout.
+    """
+
+    extras = (extras or "").strip()
+    if extras:
+        target = f"{repo_path}[{extras}]"
+    else:
+        target = str(repo_path)
+
+    LOGGER.info("Synchronising virtual environment from %s", target)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", target],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        LOGGER.exception("Failed to update Python package from %s", target)
+        return False
+
+    return True
