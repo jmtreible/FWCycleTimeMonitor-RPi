@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import AppConfig
+from .metrics import record_cycle_event
 from .state import MachineState, load_cycle_state, save_cycle_state
 
 LOGGER = logging.getLogger(__name__)
@@ -539,6 +540,10 @@ class CycleMonitor:
         except Exception:  # pragma: no cover - best effort persistence
             LOGGER.exception("Failed to persist cycle state for %s", self.config.machine_id)
         self._persist_sidecar_state(cycle_number, timestamp)
+        try:
+            record_cycle_event(self.config.machine_id, timestamp)
+        except Exception:
+            LOGGER.exception("Failed to update cycle metrics for %s", self.config.machine_id)
         return cycle_number
 
     # -----------------
