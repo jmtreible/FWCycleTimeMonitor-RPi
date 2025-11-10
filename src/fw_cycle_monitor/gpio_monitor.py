@@ -102,6 +102,7 @@ class CycleMonitor:
         self._queue_event = threading.Event()
         self._writer_stop = threading.Event()
         self._writer_thread: Optional[threading.Thread] = None
+        self._signal_high = False
 
     @property
     def stats(self) -> MonitorStats:
@@ -319,9 +320,14 @@ class CycleMonitor:
             ) from exc
 
         try:
+            try:
+                self._signal_high = bool(GPIO.input(pin))  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensive read
+                LOGGER.debug("Unable to read initial GPIO level for pin %s", pin, exc_info=True)
+                self._signal_high = False
             GPIO.add_event_detect(  # type: ignore[attr-defined]
                 pin,
-                GPIO.RISING,
+                GPIO.BOTH,
                 callback=self._handle_event,
                 bouncetime=200,
             )
@@ -335,9 +341,14 @@ class CycleMonitor:
             try:
                 GPIO.cleanup(pin)  # type: ignore[attr-defined]
                 GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # type: ignore[attr-defined]
+                try:
+                    self._signal_high = bool(GPIO.input(pin))  # type: ignore[attr-defined]
+                except Exception:  # pragma: no cover - defensive read
+                    LOGGER.debug("Unable to read initial GPIO level for pin %s on retry", pin, exc_info=True)
+                    self._signal_high = False
                 GPIO.add_event_detect(  # type: ignore[attr-defined]
                     pin,
-                    GPIO.RISING,
+                    GPIO.BOTH,
                     callback=self._handle_event,
                     bouncetime=200,
                 )
@@ -347,9 +358,27 @@ class CycleMonitor:
                 ) from final_exc
 
     def _handle_event(self, channel: int) -> None:  # pragma: no cover - triggered by GPIO
+        current_level: Optional[int] = None
+        try:
+            current_level = int(GPIO.input(self.config.gpio_pin))  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - defensive read
+            LOGGER.debug("Unable to read GPIO level for pin %s", self.config.gpio_pin, exc_info=True)
+
+        if current_level == 0:
+            with self._lock:
+                self._signal_high = False
+            return
+
+        with self._lock:
+            if self._signal_high:
+                return
+            self._signal_high = True
+
         timestamp = datetime.now(timezone.utc).astimezone()
         cycle_number = self._record_event(timestamp)
         if cycle_number is None:
+            with self._lock:
+                self._signal_high = False
             return
 
         with self._lock:
@@ -372,19 +401,71 @@ class CycleMonitor:
         with self._lock:
             if not self._counter_initialized:
                 self._restore_counter_state()
+            self._signal_high = False
         self._record_event(timestamp)
         with self._lock:
             self._stats.last_event_time = timestamp
             self._stats.events_logged += 1
+            self._signal_high = False
         if self._callback:
             self._callback(timestamp)
         return timestamp
 
+    def _ensure_csv_header_present(self, csv_path: Path) -> None:
+        if not csv_path.exists():
+            with csv_path.open("w", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(self._csv_header)
+            self._ensure_shared_permissions(csv_path)
+            return
+
+        try:
+            with csv_path.open("r", newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                header = next(reader, None)
+                if header is None:
+                    rows: list[list[str]] = []
+                else:
+                    expected_len = len(self._csv_header)
+                    if header == self._csv_header:
+                        return
+                    if len(header) != expected_len:
+                        # Likely an older CSV layout; defer to migration logic.
+                        return
+                    rows = [header]
+                rows.extend(list(reader))
+        except OSError:
+            LOGGER.exception("Failed to read CSV file %s while verifying header", csv_path)
+            raise
+
+        if not rows:
+            with csv_path.open("w", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(self._csv_header)
+            self._ensure_shared_permissions(csv_path)
+            return
+
+        LOGGER.warning("CSV %s missing header; rewriting file with header", csv_path)
+        try:
+            with csv_path.open("w", newline="") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(self._csv_header)
+                writer.writerows(rows)
+        except OSError:
+            LOGGER.exception("Failed to rewrite CSV file %s with header", csv_path)
+            raise
+        self._ensure_shared_permissions(csv_path)
+
     def _prepare_storage(self) -> None:
         if self._csv_initialized:
-            if not self._pending_loaded:
-                self._load_pending_rows()
-            return
+            if not csv_path.exists():
+                LOGGER.warning("CSV file %s missing; reinitializing storage", csv_path)
+                self._csv_initialized = False
+            else:
+                self._ensure_csv_header_present(csv_path)
+                if not self._pending_loaded:
+                    self._load_pending_rows()
+                return
         csv_path = self.config.csv_path()
         try:
             Path(self.config.csv_directory).mkdir(parents=True, exist_ok=True)
@@ -485,6 +566,34 @@ class CycleMonitor:
         header, data_rows = rows[0], rows[1:]
         if header == self._csv_header:
             return None
+
+        expected_len = len(self._csv_header)
+        if len(header) == expected_len:
+            LOGGER.warning("CSV %s is missing headers; rewriting file to restore them", csv_path)
+            rows_to_write = [header]
+            rows_to_write.extend(data_rows)
+            try:
+                with csv_path.open("w", newline="") as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(self._csv_header)
+                    writer.writerows(rows_to_write)
+            except OSError:
+                LOGGER.exception("Failed to rewrite CSV file %s with restored headers", csv_path)
+                raise
+            self._ensure_shared_permissions(csv_path)
+            if rows_to_write:
+                last_row = rows_to_write[-1]
+                try:
+                    last_timestamp = datetime.fromisoformat(last_row[2])
+                except (IndexError, ValueError):
+                    last_timestamp = datetime.now(timezone.utc).astimezone()
+                try:
+                    last_cycle = int(last_row[0])
+                except (IndexError, ValueError):
+                    last_cycle = 0
+                return (last_timestamp, last_cycle)
+            reference = datetime.now(timezone.utc).astimezone()
+            return (reference, 0)
 
         LOGGER.info("Migrating CSV file %s to include cycle numbers", csv_path)
         counter = _CycleCounter()
@@ -619,6 +728,7 @@ class CycleMonitor:
             self._write_queue = []
 
         try:
+            self._ensure_csv_header_present(csv_path)
             with csv_path.open("a", newline="") as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerows(rows_to_write)
