@@ -18,10 +18,8 @@ ACTIVATE="${VENV_BIN}/activate"
 DESKTOP_NAME="FW Cycle Monitor.desktop"
 MOUNT_POINT="${INSTALL_HOME}/FWCycle"
 CONFIG_HOME="${INSTALL_HOME}/.config/fw_cycle_monitor"
-REMOTE_SUPERVISOR_CONFIG="${CONFIG_HOME}/remote_supervisor.json"
 FSTAB_LINE="//192.168.0.249/Apps/FWCycle ${MOUNT_POINT} cifs _netdev,user=Operation1,password=Crows1991!,uid=${INSTALL_USER},gid=${INSTALL_GROUP},file_mode=0775,dir_mode=0775,noperm,vers=3.0 0 0"
 APT_PACKAGES=(python3 python3-pip python3-venv python3-tk git cifs-utils rsync xdg-user-dirs)
-INSTALL_EXTRAS="raspberrypi,remote_supervisor"
 
 printf '\n=== FW Cycle Monitor Installer ===\n'
 printf 'Detected user: %s\n' "${INSTALL_USER}"
@@ -89,7 +87,7 @@ PY
 
 install_python_package() {
     echo "Installing FW Cycle Monitor into ${VENV_DIR}..."
-    "${VENV_BIN}/pip" install --upgrade "${INSTALL_DIR}[${INSTALL_EXTRAS}]"
+    "${VENV_BIN}/pip" install --upgrade "${INSTALL_DIR}[raspberrypi]"
 }
 
 ensure_venv_launcher() {
@@ -100,9 +98,6 @@ set -euo pipefail
 
 ACTIVATE_PATH="__ACTIVATE__"
 CONFIG_HOME="__CONFIG_HOME__"
-INSTALL_DIR="__INSTALL_DIR__"
-EXTRAS_SPEC="__INSTALL_EXTRAS__"
-
 if [[ ! -f "${ACTIVATE_PATH}" ]]; then
     echo "Missing virtual environment activate script at ${ACTIVATE_PATH}" >&2
     exit 1
@@ -112,17 +107,6 @@ fi
 source "${ACTIVATE_PATH}"
 
 export FW_CYCLE_MONITOR_CONFIG_DIR="${CONFIG_HOME}"
-export FW_CYCLE_MONITOR_REPO="${INSTALL_DIR}"
-
-if [[ -n "${EXTRAS_SPEC}" ]]; then
-    export FW_CYCLE_MONITOR_INSTALL_EXTRAS="${EXTRAS_SPEC}"
-fi
-
-if [[ -n "${PYTHONPATH:-}" ]]; then
-    export PYTHONPATH="${INSTALL_DIR}/src:${PYTHONPATH}"
-else
-    export PYTHONPATH="${INSTALL_DIR}/src"
-fi
 
 if [[ $# -eq 0 ]]; then
     exec "$SHELL"
@@ -134,8 +118,6 @@ SCRIPT
     sed -i \
         -e "s|__ACTIVATE__|${ACTIVATE}|g" \
         -e "s|__CONFIG_HOME__|${CONFIG_HOME}|g" \
-        -e "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
-        -e "s|__INSTALL_EXTRAS__|${INSTALL_EXTRAS}|g" \
         "${INSTALL_DIR}/run_in_venv.sh"
     chmod +x "${INSTALL_DIR}/run_in_venv.sh"
 }
@@ -160,21 +142,11 @@ SHIM
 exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor.service_runner "$@"
 SHIM
 
-    cat > "${shim_dir}/fw-remote-supervisor-cli" <<'SHIM'
-#!/usr/bin/env bash
-exec "__INSTALL_DIR__/run_in_venv.sh" python -m fw_cycle_monitor.remote_supervisor.cli "$@"
-SHIM
-
     sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
         "${shim_dir}/fw-cycle-monitor" \
         "${shim_dir}/fw-cycle-monitor-launcher" \
-        "${shim_dir}/fw-cycle-monitor-daemon" \
-        "${shim_dir}/fw-remote-supervisor-cli"
-    chmod +x \
-        "${shim_dir}/fw-cycle-monitor" \
-        "${shim_dir}/fw-cycle-monitor-launcher" \
-        "${shim_dir}/fw-cycle-monitor-daemon" \
-        "${shim_dir}/fw-remote-supervisor-cli"
+        "${shim_dir}/fw-cycle-monitor-daemon"
+    chmod +x "${shim_dir}/fw-cycle-monitor" "${shim_dir}/fw-cycle-monitor-launcher" "${shim_dir}/fw-cycle-monitor-daemon"
 }
 
 deploy_repository() {
@@ -242,7 +214,7 @@ Version=1.0
 Type=Application
 Name=FW Cycle Monitor
 Comment=Launch the FW Cycle Monitor configuration GUI
-Exec=${INSTALL_DIR}/run_in_venv.sh python -m fw_cycle_monitor.launcher
+Exec=${INSTALL_DIR}/run_in_venv.sh python -m fw_cycle_monitor
 Icon=${icon_path}
 Terminal=false
 Categories=Utility;
@@ -273,8 +245,6 @@ User=${INSTALL_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_CONFIG_DIR=${CONFIG_HOME}
-Environment=FW_CYCLE_MONITOR_INSTALL_EXTRAS=${INSTALL_EXTRAS}
-Environment=PYTHONPATH=${INSTALL_DIR}/src
 ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.service_runner
 Restart=on-failure
 RestartSec=5
@@ -286,77 +256,6 @@ SERVICE
     systemctl daemon-reload
     systemctl enable --now fw-cycle-monitor.service
     echo "systemd service enabled and started."
-}
-
-generate_remote_supervisor_api_key() {
-    python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(32))
-PY
-}
-
-ensure_remote_supervisor_config() {
-    echo "Ensuring remote supervisor configuration at ${REMOTE_SUPERVISOR_CONFIG}..."
-    mkdir -p "${CONFIG_HOME}"
-
-    if [[ -f "${REMOTE_SUPERVISOR_CONFIG}" ]]; then
-        echo "Remote supervisor config already exists; leaving in place."
-        return
-    fi
-
-    local api_key
-    api_key="$(generate_remote_supervisor_api_key)"
-
-    cat > "${REMOTE_SUPERVISOR_CONFIG}" <<CONFIG
-{
-  "host": "0.0.0.0",
-  "port": 8443,
-  "unit_name": "fw-cycle-monitor.service",
-  "api_keys": [
-    "${api_key}"
-  ],
-  "certfile": null,
-  "keyfile": null,
-  "metrics_enabled": true
-}
-CONFIG
-
-    chown "${INSTALL_USER}:${INSTALL_GROUP}" "${REMOTE_SUPERVISOR_CONFIG}"
-    chmod 600 "${REMOTE_SUPERVISOR_CONFIG}"
-
-    echo "Generated remote supervisor API key: ${api_key}"
-    echo "Store this key securely. It is required for remote CLI access."
-}
-
-configure_remote_supervisor_service() {
-    echo "Configuring remote supervisor systemd service..."
-    cat > /etc/systemd/system/fw-remote-supervisor.service <<SERVICE
-[Unit]
-Description=FW Cycle Monitor Remote Supervisor API
-After=network-online.target
-Wants=network-online.target
-Requires=fw-cycle-monitor.service
-
-[Service]
-Type=simple
-User=${INSTALL_USER}
-Group=${INSTALL_GROUP}
-Environment=FW_CYCLE_MONITOR_CONFIG_DIR=${CONFIG_HOME}
-Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
-Environment=FW_CYCLE_MONITOR_INSTALL_EXTRAS=${INSTALL_EXTRAS}
-Environment=PYTHONPATH=${INSTALL_DIR}/src
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${VENV_BIN}/python -m fw_cycle_monitor.remote_supervisor.server --reload-settings
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-    systemctl daemon-reload
-    systemctl enable --now fw-remote-supervisor.service
-    echo "Remote supervisor service enabled and started."
 }
 
 install_apt_packages
@@ -375,8 +274,6 @@ chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${CONFIG_HOME}"
 chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
 
 configure_service
-ensure_remote_supervisor_config
-configure_remote_supervisor_service
 
 echo "\nInstallation complete!"
 printf 'The FW Cycle Monitor GUI can be launched from the desktop shortcut or via "%s/.venv/bin/python -m fw_cycle_monitor".\n' "${INSTALL_DIR}"
