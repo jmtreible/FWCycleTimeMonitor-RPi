@@ -142,6 +142,13 @@ def _handle_machine_change(previous: AppConfig, current: AppConfig) -> None:
         except Exception:  # pragma: no cover - defensive cleanup
             LOGGER.debug("Unable to clear stored state for %s", prev_machine, exc_info=True)
 
+        try:
+            from .metrics import clear_cycle_metrics
+
+            clear_cycle_metrics(prev_machine)
+        except Exception:  # pragma: no cover - defensive cleanup
+            LOGGER.debug("Unable to clear stored metrics for %s", prev_machine, exc_info=True)
+
         _remove_machine_sidecars(prev_machine, prev_directory)
 
 

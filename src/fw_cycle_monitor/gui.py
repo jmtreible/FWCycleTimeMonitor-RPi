@@ -12,6 +12,7 @@ from typing import Optional
 
 from .config import AppConfig, load_config, save_config
 from .gpio_monitor import CycleMonitor
+from .metrics import AVERAGE_WINDOWS, calculate_cycle_statistics
 from .state import load_cycle_state
 
 LOGGER = logging.getLogger(__name__)
@@ -38,6 +39,8 @@ class Application(tk.Tk):
         self._status_var = tk.StringVar(value="Checking…")
         self._last_event_var = tk.StringVar(value="—")
         self._events_logged_var = tk.StringVar(value="0")
+        self._last_cycle_time_var = tk.StringVar(value="—")
+        self._cycle_average_vars = {minutes: tk.StringVar(value="—") for minutes in AVERAGE_WINDOWS}
 
         self._build_widgets()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -67,15 +70,16 @@ class Application(tk.Tk):
 
         button_frame = ttk.Frame(frame)
         button_frame.grid(row=4, column=0, columnspan=3, pady=(16, 0), sticky="ew")
+        ttk.Button(button_frame, text="Apply", command=self._apply_config).grid(row=0, column=0, padx=(0, 8))
         self._start_button = ttk.Button(
             button_frame, text="Start Service", command=self._start_monitor, state=tk.DISABLED
         )
-        self._start_button.grid(row=0, column=0, padx=(0, 8))
+        self._start_button.grid(row=0, column=1, padx=(0, 8))
         self._stop_button = ttk.Button(
             button_frame, text="Stop Service", command=self._stop_monitor, state=tk.DISABLED
         )
-        self._stop_button.grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(button_frame, text="Log Test Event", command=self._log_test_event).grid(row=0, column=2)
+        self._stop_button.grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(button_frame, text="Log Test Event", command=self._log_test_event).grid(row=0, column=3)
 
         status_frame = ttk.LabelFrame(frame, text="Status", padding=12)
         status_frame.grid(row=5, column=0, columnspan=3, pady=(16, 0), sticky="ew")
@@ -88,6 +92,19 @@ class Application(tk.Tk):
 
         ttk.Label(status_frame, text="Events Logged:").grid(row=2, column=0, sticky="w", pady=(8, 0))
         ttk.Label(status_frame, textvariable=self._events_logged_var).grid(row=2, column=1, sticky="w", pady=(8, 0))
+
+        ttk.Label(status_frame, text="Last Cycle Time:").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(status_frame, textvariable=self._last_cycle_time_var).grid(
+            row=3, column=1, sticky="w", pady=(8, 0)
+        )
+
+        for index, minutes in enumerate(AVERAGE_WINDOWS, start=4):
+            ttk.Label(status_frame, text=f"Average ({minutes} min):").grid(
+                row=index, column=0, sticky="w", pady=(8, 0)
+            )
+            ttk.Label(status_frame, textvariable=self._cycle_average_vars[minutes]).grid(
+                row=index, column=1, sticky="w", pady=(8, 0)
+            )
 
         version = self._resolve_version()
         ttk.Label(frame, text=f"Version: {version}", foreground="#555555").grid(
@@ -145,6 +162,20 @@ class Application(tk.Tk):
             return
 
         self._last_event_var.set(timestamp.isoformat())
+        self._refresh_cycle_stats()
+
+    def _apply_config(self) -> None:
+        try:
+            config = self._read_config_from_ui()
+        except ValueError as exc:
+            messagebox.showerror("Invalid configuration", str(exc), parent=self)
+            return
+
+        save_config(config)
+        self._config = config
+        self._machine_var.set(config.machine_id)
+        self._directory_var.set(str(config.csv_directory))
+        self._reset_hour_var.set(str(config.reset_hour))
         self._refresh_cycle_stats()
 
     def _control_service(self, action: str) -> bool:
@@ -249,6 +280,9 @@ class Application(tk.Tk):
         if not machine_id:
             self._events_logged_var.set("0")
             self._last_event_var.set("—")
+            self._last_cycle_time_var.set("—")
+            for var in self._cycle_average_vars.values():
+                var.set("—")
             return
 
         state = load_cycle_state(machine_id)
@@ -258,6 +292,19 @@ class Application(tk.Tk):
         else:
             self._events_logged_var.set("0")
             self._last_event_var.set("—")
+
+        stats = calculate_cycle_statistics(machine_id)
+        self._last_cycle_time_var.set(self._format_duration(stats.last_cycle_seconds))
+        for minutes, var in self._cycle_average_vars.items():
+            var.set(self._format_duration(stats.window_averages.get(minutes)))
+    
+    def _format_duration(self, seconds: Optional[float]) -> str:
+        if seconds is None:
+            return "—"
+        total_seconds = int(round(seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     def _read_config_from_ui(self) -> AppConfig:
         machine_id = self._machine_var.get().strip().upper()
