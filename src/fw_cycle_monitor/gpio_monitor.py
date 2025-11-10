@@ -457,6 +457,7 @@ class CycleMonitor:
         self._ensure_shared_permissions(csv_path)
 
     def _prepare_storage(self) -> None:
+        csv_path = self.config.csv_path()
         if self._csv_initialized:
             if not csv_path.exists():
                 LOGGER.warning("CSV file %s missing; reinitializing storage", csv_path)
@@ -466,7 +467,6 @@ class CycleMonitor:
                 if not self._pending_loaded:
                     self._load_pending_rows()
                 return
-        csv_path = self.config.csv_path()
         try:
             Path(self.config.csv_directory).mkdir(parents=True, exist_ok=True)
             self._ensure_shared_permissions(Path(self.config.csv_directory), directory=True)
