@@ -1,7 +1,6 @@
 [Unit]
 Description=FW Cycle Monitor Remote Supervisor API
 After=network.target
-Requires=fw-cycle-monitor.service
 
 [Service]
 Type=simple

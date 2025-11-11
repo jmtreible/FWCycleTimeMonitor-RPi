@@ -58,7 +58,7 @@ class ServiceStatus(dict):
 
 
 def _run_systemctl(*args: str) -> subprocess.CompletedProcess[str]:
-    command = ["systemctl", *args]
+    command = ["sudo", "systemctl", *args]
     LOGGER.debug("Executing %%s", " ".join(command))
     result = subprocess.run(command, check=False, text=True, capture_output=True)
     if result.returncode != 0:

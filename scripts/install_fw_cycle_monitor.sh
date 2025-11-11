@@ -328,6 +328,25 @@ CONFIG
     echo "Store this key securely. It is required for remote CLI access."
 }
 
+configure_sudoers_for_remote_supervisor() {
+    echo "Configuring sudo permissions for remote supervisor..."
+    local sudoers_file="/etc/sudoers.d/fw-cycle-monitor"
+
+    cat > "${sudoers_file}" <<SUDOERS
+${INSTALL_USER} ALL=(ALL) NOPASSWD: /bin/systemctl start fw-cycle-monitor.service, /bin/systemctl stop fw-cycle-monitor.service, /bin/systemctl restart fw-cycle-monitor.service, /bin/systemctl status fw-cycle-monitor.service
+SUDOERS
+
+    chmod 0440 "${sudoers_file}"
+
+    if visudo -c -f "${sudoers_file}" >/dev/null 2>&1; then
+        echo "Sudoers file created successfully at ${sudoers_file}"
+    else
+        echo "Error: sudoers file syntax validation failed" >&2
+        rm -f "${sudoers_file}"
+        exit 1
+    fi
+}
+
 configure_remote_supervisor_service() {
     echo "Configuring remote supervisor systemd service..."
     cat > /etc/systemd/system/fw-remote-supervisor.service <<SERVICE
@@ -335,7 +354,6 @@ configure_remote_supervisor_service() {
 Description=FW Cycle Monitor Remote Supervisor API
 After=network-online.target
 Wants=network-online.target
-Requires=fw-cycle-monitor.service
 
 [Service]
 Type=simple
@@ -376,6 +394,7 @@ chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
 
 configure_service
 ensure_remote_supervisor_config
+configure_sudoers_for_remote_supervisor
 configure_remote_supervisor_service
 
 echo "\nInstallation complete!"

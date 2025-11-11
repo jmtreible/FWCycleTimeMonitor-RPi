@@ -17,6 +17,8 @@ The script now:
 - installs the `fw-cycle-monitor` package with both the `raspberrypi` and `remote_supervisor` extras so FastAPI, Uvicorn, and the CLI are present
 - provisions `fw-remote-supervisor.service` alongside the existing monitor unit and enables it immediately
 - generates `/home/<user>/.config/fw_cycle_monitor/remote_supervisor.json` with a random API key (printed at the end of the install) and restrictive permissions
+- creates `/etc/sudoers.d/fw-cycle-monitor` with passwordless sudo permissions for the remote supervisor to control the monitor service
+- configures the remote supervisor service to run independently of the monitor service, allowing remote start/stop/restart operations
 
 Make sure to store the generated API key securely—you will need it for every remote command. If you rerun the installer, the script leaves an existing config untouched, so your API keys and TLS settings persist.
 
@@ -132,7 +134,64 @@ Authenticate by sending the `X-API-Key` header. Use the TLS certificate you gene
 - **.NET (WPF/WinUI)**: use `HttpClient` to call the endpoints and render controls to start/stop or restart each Pi.
 - **Web dashboard**: Build a React or Blazor UI that loops through all machine IPs, calling the endpoints above and aggregating their responses.
 
-## 5. Maintenance tips
+## 5. Troubleshooting
+
+### Remote commands return 500 errors
+
+If you receive HTTP 500 errors when trying to stop, start, or restart the monitor service, check the following:
+
+1. **Verify sudoers configuration**:
+   ```bash
+   sudo cat /etc/sudoers.d/fw-cycle-monitor
+   ```
+
+   The file must contain a single line (no line breaks) granting passwordless sudo access to the user running the remote supervisor service:
+   ```
+   <user> ALL=(ALL) NOPASSWD: /bin/systemctl start fw-cycle-monitor.service, /bin/systemctl stop fw-cycle-monitor.service, /bin/systemctl restart fw-cycle-monitor.service, /bin/systemctl status fw-cycle-monitor.service
+   ```
+
+2. **Check which user is running the remote supervisor**:
+   ```bash
+   ps aux | grep fw-remote-supervisor
+   ```
+
+   The user shown must match the user in the sudoers file.
+
+3. **Test sudo access manually**:
+   ```bash
+   sudo systemctl stop fw-cycle-monitor.service
+   sudo systemctl status fw-cycle-monitor.service
+   ```
+
+   If prompted for a password, the sudoers configuration is incorrect.
+
+4. **Check the remote supervisor logs**:
+   ```bash
+   sudo journalctl -u fw-remote-supervisor.service -n 50
+   ```
+
+   Look for "systemctl failed with code 1" errors or permission denied messages.
+
+### Remote supervisor stops when monitor service is stopped
+
+If stopping the monitor service also stops the remote supervisor, the service dependency needs to be removed:
+
+1. **Check the remote supervisor service file**:
+   ```bash
+   sudo systemctl cat fw-remote-supervisor.service
+   ```
+
+2. **Verify it does NOT contain** `Requires=fw-cycle-monitor.service` in the `[Unit]` section.
+
+3. **If it does, reinstall with the latest version**:
+   ```bash
+   cd FWCycleTimeMonitor-RPi/scripts
+   sudo ./install_fw_cycle_monitor.sh
+   ```
+
+The remote supervisor should run independently so you can start the monitor remotely after stopping it.
+
+## 6. Maintenance tips
 
 - Rotate API keys regularly and update the `remote_supervisor.json` file on each Pi.
 - Use firewall rules to limit access to the supervisor port to trusted management workstations or VPN subnets.

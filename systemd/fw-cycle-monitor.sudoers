@@ -1,0 +1,9 @@
+# Sudoers configuration for FW Cycle Monitor Remote Supervisor
+# This file should be installed to /etc/sudoers.d/fw-cycle-monitor
+#
+# Replace <USER> with the user running the fw-remote-supervisor.service
+# By default, this is the user who runs the install script (e.g., pi, pi1, or fwmonitor)
+#
+# The remote supervisor needs passwordless sudo access to control the fw-cycle-monitor service
+
+<USER> ALL=(ALL) NOPASSWD: /bin/systemctl start fw-cycle-monitor.service, /bin/systemctl stop fw-cycle-monitor.service, /bin/systemctl restart fw-cycle-monitor.service, /bin/systemctl status fw-cycle-monitor.service
