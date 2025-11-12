@@ -172,6 +172,16 @@ Look for messages like:
 
 ## Part 2: Testing the Stack Light API
 
+### Important: HTTP vs HTTPS
+
+By default, the service runs in **HTTP mode** (not HTTPS) unless you configure SSL certificates. This is perfectly fine for testing and local network use.
+
+**Symptoms of HTTP/HTTPS mismatch:**
+- `curl: (35) OpenSSL/3.0.17: error:0A00010B:SSL routines::wrong version number`
+- Connection refused or SSL errors
+
+**Solution:** Use `http://` (not `https://`) in your curl commands unless you've configured SSL certificates.
+
 ### Test 1: Check API is Accessible
 
 From the Pi itself or another computer on the network:
@@ -181,18 +191,20 @@ From the Pi itself or another computer on the network:
 export API_KEY="your-api-key-here"
 
 # Replace with your Pi's IP address (use localhost if testing from the Pi)
-export PI_IP="192.168.1.100"
+export PI_IP="localhost"  # Or use the actual IP like "192.168.1.100"
 
-# Test basic connectivity
-curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/service/status
+# Test basic connectivity - NOTE: Using http:// not https://
+curl -H "X-API-Key: $API_KEY" http://$PI_IP:8443/service/status
 ```
+
+**Note:** No `-k` flag needed for HTTP. Only use `-k` if you've configured HTTPS with self-signed certificates.
 
 You should see JSON output with service status information.
 
 ### Test 2: Get Stack Light Status
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/stacklight/status
+curl -H "X-API-Key: $API_KEY" http://$PI_IP:8443/stacklight/status
 ```
 
 **Expected Output:**
@@ -208,11 +220,11 @@ curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/stacklight/status
 ### Test 3: Turn On Green Light
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": true, "amber": false, "red": false}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 ```
 
 **Expected Output:**
@@ -238,29 +250,29 @@ You should see: `MOCK: Set lights - Green=True, Amber=False, Red=False`
 ### Test 4: Turn On Amber Light
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": false, "amber": true, "red": false}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 ```
 
 ### Test 5: Turn On Red Light
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": false, "amber": false, "red": true}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 ```
 
 ### Test 6: Run Test Sequence
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -X POST \
-  https://$PI_IP:8443/stacklight/test
+  http://$PI_IP:8443/stacklight/test
 ```
 
 **Expected Output:**
@@ -282,15 +294,15 @@ sudo journalctl -u fw-remote-supervisor.service -f
 ### Test 7: Turn Off All Lights
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -X POST \
-  https://$PI_IP:8443/stacklight/off
+  http://$PI_IP:8443/stacklight/off
 ```
 
 ### Test 8: Verify Status Again
 
 ```bash
-curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/stacklight/status
+curl -H "X-API-Key: $API_KEY" http://$PI_IP:8443/stacklight/status
 ```
 
 All lights should be off and you should see a recent timestamp.
@@ -364,37 +376,37 @@ export API_KEY="your-api-key-here"
 export PI_IP="localhost"  # Or the Pi's IP address
 
 # Test green light (should turn on physically)
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": true, "amber": false, "red": false}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 
 # Wait a few seconds and observe the green light
 
 # Test amber light
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": false, "amber": true, "red": false}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 
 # Test red light
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": false, "amber": false, "red": true}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 
 # Run full test sequence (watch the lights cycle)
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -X POST \
-  https://$PI_IP:8443/stacklight/test
+  http://$PI_IP:8443/stacklight/test
 
 # Turn all off
-curl -k -H "X-API-Key: $API_KEY" \
+curl -H "X-API-Key: $API_KEY" \
   -X POST \
-  https://$PI_IP:8443/stacklight/off
+  http://$PI_IP:8443/stacklight/off
 ```
 
 ### Step 5: Verify with Multimeter (Optional)
@@ -507,14 +519,14 @@ Navigate to the **History** page to see all stack light commands that have been 
 
 ```bash
 # Time a simple status request
-time curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/stacklight/status
+time curl -H "X-API-Key: $API_KEY" http://$PI_IP:8443/stacklight/status
 
 # Time a set operation
-time curl -k -H "X-API-Key: $API_KEY" \
+time curl -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
   -d '{"green": true, "amber": false, "red": false}' \
-  https://$PI_IP:8443/stacklight/set
+  http://$PI_IP:8443/stacklight/set
 ```
 
 Typical response times should be under 100ms for status, under 200ms for set operations.
@@ -525,11 +537,11 @@ Test rapid consecutive requests:
 
 ```bash
 for i in {1..10}; do
-  curl -k -H "X-API-Key: $API_KEY" \
+  curl -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -X POST \
     -d '{"green": true, "amber": false, "red": false}' \
-    https://$PI_IP:8443/stacklight/set
+    http://$PI_IP:8443/stacklight/set
   sleep 0.5
 done
 ```
@@ -544,9 +556,9 @@ Once all tests pass, your system is ready for ERP integration!
 
 ### Information to Provide to ERP Team
 
-1. **API Base URL**: `https://<pi-ip>:8443`
+1. **API Base URL**: `http://<pi-ip>:8443` (or `https://` if you configured SSL)
 2. **API Key**: (from installation)
-3. **SSL Certificate**: Self-signed (they may need to disable SSL verification)
+3. **SSL Certificate**: None by default (HTTP mode). If using HTTPS, it's self-signed (they may need to disable SSL verification)
 4. **Implementation Plan**: Share `STACKLIGHT_IMPLEMENTATION_PLAN.md` with Phase 3 details
 
 ### Test ERP Integration
@@ -614,10 +626,10 @@ sudo systemctl status fw-remote-supervisor.service
 nano ~/.config/fw_cycle_monitor/remote_supervisor.json
 
 # Test API connectivity
-curl -k -H "X-API-Key: $API_KEY" https://$PI_IP:8443/stacklight/status
+curl -H "X-API-Key: $API_KEY" http://$PI_IP:8443/stacklight/status
 
 # Turn all lights off immediately
-curl -k -H "X-API-Key: $API_KEY" -X POST https://$PI_IP:8443/stacklight/off
+curl -H "X-API-Key: $API_KEY" -X POST http://$PI_IP:8443/stacklight/off
 ```
 
 ---
