@@ -230,11 +230,16 @@ Or use the "Restart Remote Supervisor" button in the GUI.
 
 ### Issue: GPIO Permission Denied
 
-**Solution:** Make sure the service is running as the correct user:
+**Solution:** The installer now automatically configures GPIO permissions. If you still see permission errors:
+
+1. Verify user is in gpio group:
 ```bash
-sudo systemctl status fw-remote-supervisor
+id $(whoami) | grep gpio
 ```
-The installer configures this automatically.
+
+2. The systemd service includes `SupplementaryGroups=gpio` which ensures proper permissions even after service restarts (no reboot needed).
+
+3. If you installed before this fix, re-run the installer or manually update the service file.
 
 ### Issue: 403 Forbidden API errors
 
