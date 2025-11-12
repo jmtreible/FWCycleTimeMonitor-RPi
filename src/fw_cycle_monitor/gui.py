@@ -14,7 +14,7 @@ from .config import AppConfig, load_config, save_config
 from .gpio_monitor import CycleMonitor
 from .metrics import AVERAGE_WINDOWS, calculate_cycle_statistics
 from .state import load_cycle_state
-from .remote_supervisor.settings import get_settings
+from .remote_supervisor.settings import get_settings, refresh_settings
 from .remote_supervisor.stacklight_controller import StackLightController
 
 LOGGER = logging.getLogger(__name__)
@@ -562,6 +562,10 @@ class Application(tk.Tk):
                 except Exception as cleanup_exc:
                     LOGGER.warning(f"Error during cleanup: {cleanup_exc}")
                 self._stacklight_controller = None
+
+            # Force refresh of cached settings
+            LOGGER.info("Refreshing settings cache...")
+            refresh_settings()
 
             # Reinitialize with new config
             self._initialize_stacklight_controller()
