@@ -17,6 +17,26 @@ _SETTINGS_LOCK = RLock()
 
 
 @dataclass
+class StackLightSettings:
+    """Stack light configuration.
+
+    Default pins are for Waveshare 3-channel relay HAT:
+    - BCM 26 (Relay 1) → Green
+    - BCM 20 (Relay 2) → Amber
+    - BCM 21 (Relay 3) → Red
+
+    Note: Waveshare relay board is active LOW (LOW=ON, HIGH=OFF)
+    """
+
+    enabled: bool = True
+    mock_mode: bool = False
+    active_low: bool = True
+    green_pin: int = 26
+    amber_pin: int = 20
+    red_pin: int = 21
+
+
+@dataclass
 class RemoteSupervisorSettings:
     """Runtime options for the remote supervisor API."""
 
@@ -28,6 +48,7 @@ class RemoteSupervisorSettings:
     keyfile: Optional[Path] = None
     ca_bundle: Optional[Path] = None
     metrics_enabled: bool = True
+    stacklight: StackLightSettings = field(default_factory=StackLightSettings)
 
     def __post_init__(self) -> None:
         if isinstance(self.certfile, str):
@@ -104,6 +125,18 @@ def load_settings() -> RemoteSupervisorSettings:
     metrics_enabled = os.getenv("FW_REMOTE_SUPERVISOR_METRICS_ENABLED")
     if metrics_enabled is not None:
         payload["metrics_enabled"] = metrics_enabled.lower() not in {"0", "false", "no"}
+
+    # Handle stacklight settings
+    if "stacklight" in payload and isinstance(payload["stacklight"], dict):
+        stacklight_data = payload["stacklight"]
+        payload["stacklight"] = StackLightSettings(
+            enabled=stacklight_data.get("enabled", True),
+            mock_mode=stacklight_data.get("mock_mode", False),
+            active_low=stacklight_data.get("active_low", True),
+            green_pin=stacklight_data.get("pins", {}).get("green", 26),
+            amber_pin=stacklight_data.get("pins", {}).get("amber", 20),
+            red_pin=stacklight_data.get("pins", {}).get("red", 21),
+        )
 
     return RemoteSupervisorSettings(**payload)
 

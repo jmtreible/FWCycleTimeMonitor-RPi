@@ -1,0 +1,20 @@
+{
+  "host": "0.0.0.0",
+  "port": 8443,
+  "unit_name": "fw-cycle-monitor.service",
+  "api_keys": ["your-secure-api-key-here"],
+  "certfile": null,
+  "keyfile": null,
+  "ca_bundle": null,
+  "metrics_enabled": true,
+  "stacklight": {
+    "enabled": true,
+    "mock_mode": false,
+    "active_low": true,
+    "pins": {
+      "green": 26,
+      "amber": 20,
+      "red": 21
+    }
+  }
+}

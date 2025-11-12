@@ -42,3 +42,30 @@ class ConfigSnapshot(BaseModel):
     gpio_pin: int
     csv_path: str
     reset_hour: int
+
+
+class StackLightState(BaseModel):
+    """Current state of stack lights."""
+
+    green: bool = Field(..., description="Green light state")
+    amber: bool = Field(..., description="Amber/yellow light state")
+    red: bool = Field(..., description="Red light state")
+    last_updated: Optional[str] = Field(None, description="ISO timestamp of last update")
+
+
+class StackLightSetRequest(BaseModel):
+    """Request to set stack light states."""
+
+    green: bool = Field(..., description="Green light state")
+    amber: bool = Field(..., description="Amber/yellow light state")
+    red: bool = Field(..., description="Red light state")
+
+
+class StackLightResponse(BaseModel):
+    """Response from stack light operations."""
+
+    success: bool = Field(..., description="Whether the operation succeeded")
+    state: Optional[StackLightState] = Field(None, description="Current light state")
+    message: Optional[str] = Field(None, description="Status or error message")
+    timestamp: Optional[str] = Field(None, description="ISO timestamp of response")
+    error: Optional[str] = Field(None, description="Error details if failed")
