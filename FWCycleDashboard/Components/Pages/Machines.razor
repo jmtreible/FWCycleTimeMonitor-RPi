@@ -1,0 +1,227 @@
+@page "/machines"
+@rendermode InteractiveServer
+@using FWCycleDashboard.Data
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject NavigationManager Navigation
+
+<PageTitle>Machines</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h1>Machines</h1>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" @onclick="ShowAddMachine">
+                Add Machine
+            </button>
+        </div>
+    </div>
+
+    @if (machines == null)
+    {
+        <p><em>Loading...</em></p>
+    }
+    else
+    {
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Machine ID</th>
+                    <th>IP Address</th>
+                    <th>Port</th>
+                    <th>Group</th>
+                    <th>Location</th>
+                    <th>Last Seen</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var machine in machines)
+                {
+                    <tr>
+                        <td>@machine.MachineId</td>
+                        <td>@machine.IpAddress</td>
+                        <td>@machine.Port</td>
+                        <td>@(machine.Group?.Name ?? "-")</td>
+                        <td>@(machine.Location ?? "-")</td>
+                        <td>
+                            @if (machine.LastSeenAt.HasValue)
+                            {
+                                @machine.LastSeenAt.Value.ToLocalTime().ToString("g")
+                            }
+                            else
+                            {
+                                <span class="text-muted">Never</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-warning" @onclick="() => EditMachine(machine)">
+                                Edit
+                            </button>
+                            <button class="btn btn-sm btn-danger ms-2" @onclick="() => DeleteMachine(machine)">
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@* Add/Edit Modal *@
+@if (showModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editingMachine.Id == 0 ? "Add Machine" : "Edit Machine")</h5>
+                    <button type="button" class="btn-close" @onclick="HideModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Machine ID</label>
+                        <input type="text" class="form-control" @bind="editingMachine.MachineId" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">IP Address</label>
+                        <input type="text" class="form-control" @bind="editingMachine.IpAddress" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Port</label>
+                        <input type="number" class="form-control" @bind="editingMachine.Port" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">API Key</label>
+                        <input type="text" class="form-control" @bind="editingMachine.ApiKey" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Group</label>
+                        <select class="form-select" @bind="editingMachine.GroupId">
+                            <option value="">-- No Group --</option>
+                            @foreach (var group in groups)
+                            {
+                                <option value="@group.Id">@group.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Location (optional)</label>
+                        <input type="text" class="form-control" @bind="editingMachine.Location" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (optional)</label>
+                        <textarea class="form-control" rows="2" @bind="editingMachine.Description"></textarea>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" @bind="editingMachine.UseHttps" />
+                        <label class="form-check-label">Use HTTPS</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="HideModal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveMachine">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Machine>? machines;
+    private List<MachineGroup> groups = new();
+    private bool showModal = false;
+    private Machine editingMachine = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        machines = await DbContext.Machines
+            .Include(m => m.Group)
+            .OrderBy(m => m.MachineId)
+            .ToListAsync();
+
+        groups = await DbContext.MachineGroups
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+    }
+
+    private void ShowAddMachine()
+    {
+        editingMachine = new Machine { Port = 8443 };
+        showModal = true;
+    }
+
+    private void EditMachine(Machine machine)
+    {
+        editingMachine = new Machine
+        {
+            Id = machine.Id,
+            MachineId = machine.MachineId,
+            IpAddress = machine.IpAddress,
+            Port = machine.Port,
+            ApiKey = machine.ApiKey,
+            GroupId = machine.GroupId,
+            Location = machine.Location,
+            Description = machine.Description,
+            UseHttps = machine.UseHttps
+        };
+        showModal = true;
+    }
+
+    private async Task SaveMachine()
+    {
+        if (editingMachine.Id == 0)
+        {
+            DbContext.Machines.Add(editingMachine);
+        }
+        else
+        {
+            var existing = await DbContext.Machines.FindAsync(editingMachine.Id);
+            if (existing != null)
+            {
+                existing.MachineId = editingMachine.MachineId;
+                existing.IpAddress = editingMachine.IpAddress;
+                existing.Port = editingMachine.Port;
+                existing.ApiKey = editingMachine.ApiKey;
+                existing.GroupId = editingMachine.GroupId;
+                existing.Location = editingMachine.Location;
+                existing.Description = editingMachine.Description;
+                existing.UseHttps = editingMachine.UseHttps;
+            }
+        }
+
+        await DbContext.SaveChangesAsync();
+        await LoadData();
+        HideModal();
+    }
+
+    private async Task DeleteMachine(Machine machine)
+    {
+        if (confirm($"Are you sure you want to delete machine {machine.MachineId}?"))
+        {
+            DbContext.Machines.Remove(machine);
+            await DbContext.SaveChangesAsync();
+            await LoadData();
+        }
+    }
+
+    private void HideModal()
+    {
+        showModal = false;
+    }
+
+    private bool confirm(string message)
+    {
+        // In a real app, use a proper confirmation dialog
+        // For now, this is a placeholder
+        return true;
+    }
+}

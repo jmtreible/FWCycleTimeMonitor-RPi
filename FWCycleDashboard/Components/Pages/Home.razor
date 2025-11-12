@@ -1,0 +1,374 @@
+@page "/"
+@rendermode InteractiveServer
+@using FWCycleDashboard.Data
+@using FWCycleDashboard.Services
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject RemoteSupervisorClient SupervisorClient
+@implements IDisposable
+
+<PageTitle>Dashboard</PageTitle>
+
+<h1>Cycle Monitor Dashboard</h1>
+
+<div class="mb-3">
+    <button class="btn btn-primary" @onclick="RefreshAll" disabled="@isRefreshing">
+        @if (isRefreshing)
+        {
+            <span class="spinner-border spinner-border-sm me-2"></span>
+        }
+        Refresh All
+    </button>
+    <button class="btn btn-secondary ms-2" @onclick="ToggleAutoRefresh">
+        Auto-Refresh: @(autoRefreshEnabled ? "On" : "Off")
+    </button>
+</div>
+
+@if (machineStatuses == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!machineStatuses.Any())
+{
+    <div class="alert alert-info">
+        <h4>No machines configured</h4>
+        <p>Get started by adding machines to monitor.</p>
+        <a href="/machines" class="btn btn-primary">Add Machines</a>
+    </div>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h5>Online</h5>
+                    <h2>@machineStatuses.Count(m => m.IsOnline && m.Status?.ActiveState == "active")</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-danger text-white">
+                <div class="card-body">
+                    <h5>Stopped</h5>
+                    <h2>@machineStatuses.Count(m => m.IsOnline && m.Status?.ActiveState != "active")</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-secondary text-white">
+                <div class="card-body">
+                    <h5>Offline</h5>
+                    <h2>@machineStatuses.Count(m => !m.IsOnline)</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h5>Total</h5>
+                    <h2>@machineStatuses.Count</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        @foreach (var status in machineStatuses)
+        {
+            var machine = machines.FirstOrDefault(m => m.Id == status.MachineId);
+            if (machine != null)
+            {
+                <div class="col-md-4 mb-3">
+                    <div class="card @GetCardClass(status)">
+                        <div class="card-header">
+                            <strong>@machine.MachineId</strong>
+                            <span class="badge @GetStatusBadge(status) float-end">
+                                @(status.IsOnline ? (status.Status?.ActiveState ?? "unknown") : "offline")
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            @if (machine.Group != null)
+                            {
+                                <p class="text-muted"><small>Group: @machine.Group.Name</small></p>
+                            }
+                            <p><small>@machine.IpAddress:@machine.Port</small></p>
+                            @if (status.IsOnline && status.Status != null)
+                            {
+                                <p><small>PID: @status.Status.Pid</small></p>
+                                @if (status.Status.UptimeSeconds.HasValue)
+                                {
+                                    <p><small>Uptime: @FormatUptime(status.Status.UptimeSeconds.Value)</small></p>
+                                }
+                            }
+                        </div>
+                        <div class="card-footer">
+                            <div class="mb-2">
+                                <button class="btn btn-sm btn-success" @onclick="() => StartService(machine)" disabled="@(!status.IsOnline)">Start</button>
+                                <button class="btn btn-sm btn-warning" @onclick="() => RestartService(machine)" disabled="@(!status.IsOnline)">Restart</button>
+                                <button class="btn btn-sm btn-danger" @onclick="() => StopService(machine)" disabled="@(!status.IsOnline)">Stop</button>
+                            </div>
+
+                            @if (status.StackLight != null)
+                            {
+                                <div class="border-top pt-2">
+                                    <small class="text-muted d-block mb-1">Stack Lights:</small>
+                                    <div class="btn-group btn-group-sm mb-1" role="group">
+                                        <button class="btn @(status.StackLight.Green ? "btn-success" : "btn-outline-success")"
+                                                @onclick="() => SetStackLight(machine, true, false, false)"
+                                                disabled="@(!status.IsOnline)">
+                                            Green
+                                        </button>
+                                        <button class="btn @(status.StackLight.Amber ? "btn-warning" : "btn-outline-warning")"
+                                                @onclick="() => SetStackLight(machine, false, true, false)"
+                                                disabled="@(!status.IsOnline)">
+                                            Amber
+                                        </button>
+                                        <button class="btn @(status.StackLight.Red ? "btn-danger" : "btn-outline-danger")"
+                                                @onclick="() => SetStackLight(machine, false, false, true)"
+                                                disabled="@(!status.IsOnline)">
+                                            Red
+                                        </button>
+                                    </div>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button class="btn btn-outline-secondary"
+                                                @onclick="() => TestStackLight(machine)"
+                                                disabled="@(!status.IsOnline)">
+                                            Test
+                                        </button>
+                                        <button class="btn btn-outline-secondary"
+                                                @onclick="() => TurnOffStackLight(machine)"
+                                                disabled="@(!status.IsOnline)">
+                                            All Off
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(status.StackLight.LastUpdated))
+                                    {
+                                        <small class="text-muted d-block mt-1">
+                                            Updated: @FormatTimestamp(status.StackLight.LastUpdated)
+                                        </small>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    private List<Machine> machines = new();
+    private List<MachineStatus>? machineStatuses;
+    private bool isRefreshing = false;
+    private bool autoRefreshEnabled = true;
+    private System.Threading.Timer? refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMachines();
+        await RefreshAll();
+        StartAutoRefresh();
+    }
+
+    private async Task LoadMachines()
+    {
+        machines = await DbContext.Machines.Include(m => m.Group).ToListAsync();
+    }
+
+    private async Task RefreshAll()
+    {
+        isRefreshing = true;
+        StateHasChanged();
+        try
+        {
+            var tasks = machines.Select(m => SupervisorClient.GetFullStatusAsync(m));
+            machineStatuses = (await Task.WhenAll(tasks)).ToList();
+            foreach (var status in machineStatuses.Where(s => s.IsOnline))
+            {
+                var machine = machines.FirstOrDefault(m => m.Id == status.MachineId);
+                if (machine != null)
+                {
+                    machine.LastSeenAt = DateTime.UtcNow;
+                    machine.LastStatus = status.Status?.ActiveState;
+                }
+            }
+            await DbContext.SaveChangesAsync();
+        }
+        finally
+        {
+            isRefreshing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task StartService(Machine machine)
+    {
+        var (success, error) = await SupervisorClient.StartServiceAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "start",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        await Task.Delay(1000);
+        await RefreshAll();
+    }
+
+    private async Task StopService(Machine machine)
+    {
+        var (success, error) = await SupervisorClient.StopServiceAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "stop",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        await Task.Delay(1000);
+        await RefreshAll();
+    }
+
+    private async Task RestartService(Machine machine)
+    {
+        var (success, error) = await SupervisorClient.RestartServiceAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "restart",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        await Task.Delay(1000);
+        await RefreshAll();
+    }
+
+    private string GetCardClass(MachineStatus status)
+    {
+        if (!status.IsOnline) return "border-secondary";
+        return status.Status?.ActiveState == "active" ? "border-success" : "border-danger";
+    }
+
+    private string GetStatusBadge(MachineStatus status)
+    {
+        if (!status.IsOnline) return "bg-secondary";
+        return status.Status?.ActiveState == "active" ? "bg-success" : "bg-danger";
+    }
+
+    private string FormatUptime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        if (ts.TotalDays >= 1)
+            return $"{(int)ts.TotalDays}d {ts.Hours}h";
+        if (ts.TotalHours >= 1)
+            return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+        return $"{(int)ts.TotalMinutes}m";
+    }
+
+    private void StartAutoRefresh()
+    {
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (autoRefreshEnabled)
+            {
+                await InvokeAsync(async () => await RefreshAll());
+            }
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private void ToggleAutoRefresh()
+    {
+        autoRefreshEnabled = !autoRefreshEnabled;
+    }
+
+    private async Task SetStackLight(Machine machine, bool green, bool amber, bool red)
+    {
+        var (success, error) = await SupervisorClient.SetStackLightAsync(machine, green, amber, red);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = $"stacklight: G={green} A={amber} R={red}",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        await Task.Delay(500);
+        await RefreshAll();
+    }
+
+    private async Task TestStackLight(Machine machine)
+    {
+        var (success, error) = await SupervisorClient.TestStackLightAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "stacklight: test",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        // Wait for test sequence to complete (8 seconds) plus buffer
+        await Task.Delay(9000);
+        await RefreshAll();
+    }
+
+    private async Task TurnOffStackLight(Machine machine)
+    {
+        var (success, error) = await SupervisorClient.TurnOffStackLightAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "stacklight: all off",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        await Task.Delay(500);
+        await RefreshAll();
+    }
+
+    private string FormatTimestamp(string? timestamp)
+    {
+        if (string.IsNullOrEmpty(timestamp))
+            return "Unknown";
+
+        if (DateTime.TryParse(timestamp, out var dt))
+        {
+            var localTime = dt.ToLocalTime();
+            var diff = DateTime.Now - localTime;
+
+            if (diff.TotalSeconds < 60)
+                return "Just now";
+            if (diff.TotalMinutes < 60)
+                return $"{(int)diff.TotalMinutes}m ago";
+            if (diff.TotalHours < 24)
+                return $"{(int)diff.TotalHours}h ago";
+
+            return localTime.ToString("g");
+        }
+
+        return timestamp;
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}

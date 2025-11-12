@@ -1,0 +1,223 @@
+@page "/groups"
+@rendermode InteractiveServer
+@using FWCycleDashboard.Data
+@using FWCycleDashboard.Services
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject RemoteSupervisorClient SupervisorClient
+
+<PageTitle>Groups</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h1>Machine Groups</h1>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" @onclick="ShowAddGroup">
+                Add Group
+            </button>
+        </div>
+    </div>
+
+    @if (groups == null)
+    {
+        <p><em>Loading...</em></p>
+    }
+    else
+    {
+        @foreach (var group in groups)
+        {
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">@group.Name</h5>
+                    <div>
+                        <button class="btn btn-sm btn-success me-2" @onclick="@(() => ExecuteGroupCommand(group, "start"))">
+                            Start All
+                        </button>
+                        <button class="btn btn-sm btn-warning me-2" @onclick="@(() => ExecuteGroupCommand(group, "restart"))">
+                            Restart All
+                        </button>
+                        <button class="btn btn-sm btn-danger me-2" @onclick="@(() => ExecuteGroupCommand(group, "stop"))">
+                            Stop All
+                        </button>
+                        <button class="btn btn-sm btn-secondary me-2" @onclick="@(() => EditGroup(group))">
+                            Edit
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="@(() => DeleteGroup(group))">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(group.Description))
+                    {
+                        <p class="text-muted">@group.Description</p>
+                    }
+                    @if (group.Machines.Any())
+                    {
+                        <p><strong>Machines in this group:</strong></p>
+                        <ul>
+                            @foreach (var machine in group.Machines)
+                            {
+                                <li>@machine.MachineId (@machine.IpAddress)</li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <p class="text-muted">No machines in this group</p>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@* Add/Edit Modal *@
+@if (showModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editingGroup.Id == 0 ? "Add Group" : "Edit Group")</h5>
+                    <button type="button" class="btn-close" @onclick="HideModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Group Name</label>
+                        <input type="text" class="form-control" @bind="editingGroup.Name" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (optional)</label>
+                        <textarea class="form-control" rows="2" @bind="editingGroup.Description"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="HideModal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveGroup">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MachineGroup>? groups;
+    private bool showModal = false;
+    private MachineGroup editingGroup = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        groups = await DbContext.MachineGroups
+            .Include(g => g.Machines)
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+    }
+
+    private void ShowAddGroup()
+    {
+        editingGroup = new MachineGroup();
+        showModal = true;
+    }
+
+    private void EditGroup(MachineGroup group)
+    {
+        editingGroup = new MachineGroup
+        {
+            Id = group.Id,
+            Name = group.Name,
+            Description = group.Description
+        };
+        showModal = true;
+    }
+
+    private async Task SaveGroup()
+    {
+        if (editingGroup.Id == 0)
+        {
+            DbContext.MachineGroups.Add(editingGroup);
+        }
+        else
+        {
+            var existing = await DbContext.MachineGroups.FindAsync(editingGroup.Id);
+            if (existing != null)
+            {
+                existing.Name = editingGroup.Name;
+                existing.Description = editingGroup.Description;
+            }
+        }
+
+        await DbContext.SaveChangesAsync();
+        await LoadData();
+        HideModal();
+    }
+
+    private async Task DeleteGroup(MachineGroup group)
+    {
+        if (confirm($"Are you sure you want to delete group {group.Name}?"))
+        {
+            DbContext.MachineGroups.Remove(group);
+            await DbContext.SaveChangesAsync();
+            await LoadData();
+        }
+    }
+
+    private async Task ExecuteGroupCommand(MachineGroup group, string command)
+    {
+        var machines = await DbContext.Machines
+            .Where(m => m.GroupId == group.Id)
+            .ToListAsync();
+
+        foreach (var machine in machines)
+        {
+            try
+            {
+                (bool success, string? error) = command.ToLower() switch
+                {
+                    "start" => await SupervisorClient.StartServiceAsync(machine),
+                    "stop" => await SupervisorClient.StopServiceAsync(machine),
+                    "restart" => await SupervisorClient.RestartServiceAsync(machine),
+                    _ => (false, "Unknown command")
+                };
+
+                // Log to database
+                DbContext.CommandHistory.Add(new CommandHistory
+                {
+                    MachineId = machine.Id,
+                    Command = command,
+                    Success = success,
+                    Error = error
+                });
+            }
+            catch (Exception ex)
+            {
+                DbContext.CommandHistory.Add(new CommandHistory
+                {
+                    MachineId = machine.Id,
+                    Command = command,
+                    Success = false,
+                    Error = ex.Message
+                });
+            }
+        }
+
+        await DbContext.SaveChangesAsync();
+    }
+
+    private void HideModal()
+    {
+        showModal = false;
+    }
+
+    private bool confirm(string message)
+    {
+        return true; // Placeholder
+    }
+}

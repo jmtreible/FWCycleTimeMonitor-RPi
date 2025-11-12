@@ -1,0 +1,78 @@
+@page "/history"
+@rendermode InteractiveServer
+@using FWCycleDashboard.Data
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Command History</PageTitle>
+
+<div class="container-fluid">
+    <h1>Command History</h1>
+
+    @if (commandHistory == null)
+    {
+        <p><em>Loading...</em></p>
+    }
+    else
+    {
+        <table class="table table-striped table-sm">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Machine</th>
+                    <th>Command</th>
+                    <th>Status</th>
+                    <th>Response/Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var cmd in commandHistory)
+                {
+                    <tr>
+                        <td>@cmd.ExecutedAt.ToLocalTime().ToString("g")</td>
+                        <td>@cmd.Machine.MachineId</td>
+                        <td><span class="badge bg-info">@cmd.Command</span></td>
+                        <td>
+                            @if (cmd.Success)
+                            {
+                                <span class="badge bg-success">Success</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-danger">Failed</span>
+                            }
+                        </td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(cmd.Response))
+                            {
+                                <small class="text-muted">@cmd.Response</small>
+                            }
+                            @if (!string.IsNullOrEmpty(cmd.Error))
+                            {
+                                <small class="text-danger">@cmd.Error</small>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (!commandHistory.Any())
+        {
+            <div class="alert alert-info">No command history yet.</div>
+        }
+    }
+</div>
+
+@code {
+    private List<CommandHistory>? commandHistory;
+
+    protected override async Task OnInitializedAsync()
+    {
+        commandHistory = await DbContext.CommandHistory
+            .Include(ch => ch.Machine)
+            .OrderByDescending(ch => ch.ExecutedAt)
+            .Take(100)
+            .ToListAsync();
+    }
+}
