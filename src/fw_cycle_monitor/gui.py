@@ -167,15 +167,18 @@ class Application(tk.Tk):
             row=0, column=4, padx=(0, 8)
         )
 
-        # Config reload button
+        # Config reload and service restart buttons
         stacklight_reload_frame = ttk.Frame(stacklight_frame)
         stacklight_reload_frame.grid(row=3, column=0, columnspan=4, pady=(8, 0), sticky="ew")
 
         ttk.Button(stacklight_reload_frame, text="Reload Config", command=self._reload_stacklight_config).grid(
-            row=0, column=0
+            row=0, column=0, padx=(0, 8)
         )
-        ttk.Label(stacklight_reload_frame, text="(Use after changing mock_mode in config file)", foreground="#777777", font=("TkDefaultFont", 8)).grid(
-            row=0, column=1, padx=(8, 0), sticky="w"
+        ttk.Button(stacklight_reload_frame, text="Restart Remote Supervisor", command=self._restart_remote_supervisor).grid(
+            row=0, column=1, padx=(0, 8)
+        )
+        ttk.Label(stacklight_reload_frame, text="(Reload GUI config or restart API service)", foreground="#777777", font=("TkDefaultFont", 8)).grid(
+            row=0, column=2, padx=(8, 0), sticky="w"
         )
 
         version = self._resolve_version()
@@ -578,6 +581,85 @@ class Application(tk.Tk):
         except Exception as exc:
             LOGGER.error(f"Failed to reload stack light config: {exc}", exc_info=True)
             messagebox.showerror("Error", f"Failed to reload config: {exc}", parent=self)
+
+    def _restart_remote_supervisor(self) -> None:
+        """Restart the remote supervisor service."""
+        try:
+            # Ask for confirmation
+            response = messagebox.askyesno(
+                "Restart Service",
+                "This will restart the fw-remote-supervisor service.\n\n"
+                "The API will be unavailable for a few seconds.\n\n"
+                "Continue?",
+                parent=self
+            )
+
+            if not response:
+                return
+
+            LOGGER.info("Restarting fw-remote-supervisor service...")
+
+            # Restart the service
+            result = subprocess.run(
+                ["systemctl", "restart", "fw-remote-supervisor.service"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                LOGGER.error(f"Failed to restart fw-remote-supervisor: {error_msg}")
+                messagebox.showerror(
+                    "Restart Failed",
+                    f"Failed to restart fw-remote-supervisor service:\n{error_msg}\n\n"
+                    "You may need to run this with sudo permissions.",
+                    parent=self
+                )
+                return
+
+            # Wait a moment for service to start
+            import time
+            time.sleep(2)
+
+            # Check if service is running
+            check_result = subprocess.run(
+                ["systemctl", "is-active", "fw-remote-supervisor.service"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            service_state = check_result.stdout.strip()
+
+            if service_state == "active":
+                messagebox.showinfo(
+                    "Service Restarted",
+                    "The fw-remote-supervisor service has been restarted successfully.\n\n"
+                    "The API and dashboard can now use the updated configuration.",
+                    parent=self
+                )
+            else:
+                messagebox.showwarning(
+                    "Service Status Unknown",
+                    f"Service restart command completed, but status is: {service_state}\n\n"
+                    "Check the logs with: sudo journalctl -u fw-remote-supervisor -n 20",
+                    parent=self
+                )
+
+        except FileNotFoundError:
+            messagebox.showerror(
+                "systemctl not available",
+                "The systemctl command is not available.\n\n"
+                "Please restart the service manually:\n"
+                "sudo systemctl restart fw-remote-supervisor",
+                parent=self
+            )
+        except Exception as exc:
+            LOGGER.error(f"Failed to restart remote supervisor: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to restart service: {exc}", parent=self)
 
     def _on_close(self) -> None:
         if self._status_job is not None:

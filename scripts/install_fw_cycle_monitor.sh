@@ -374,11 +374,11 @@ CONFIG
 }
 
 configure_sudoers_for_remote_supervisor() {
-    echo "Configuring sudo permissions for remote supervisor..."
+    echo "Configuring sudo permissions for remote supervisor and GUI..."
     local sudoers_file="/etc/sudoers.d/fw-cycle-monitor"
 
     cat > "${sudoers_file}" <<SUDOERS
-${INSTALL_USER} ALL=(ALL) NOPASSWD: /bin/systemctl start fw-cycle-monitor.service, /bin/systemctl stop fw-cycle-monitor.service, /bin/systemctl restart fw-cycle-monitor.service, /bin/systemctl status fw-cycle-monitor.service
+${INSTALL_USER} ALL=(ALL) NOPASSWD: /bin/systemctl start fw-cycle-monitor.service, /bin/systemctl stop fw-cycle-monitor.service, /bin/systemctl restart fw-cycle-monitor.service, /bin/systemctl status fw-cycle-monitor.service, /bin/systemctl start fw-remote-supervisor.service, /bin/systemctl stop fw-remote-supervisor.service, /bin/systemctl restart fw-remote-supervisor.service, /bin/systemctl status fw-remote-supervisor.service, /bin/systemctl is-active fw-remote-supervisor.service
 SUDOERS
 
     chmod 0440 "${sudoers_file}"
