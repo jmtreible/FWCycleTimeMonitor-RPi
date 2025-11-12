@@ -392,6 +392,19 @@ SUDOERS
     fi
 }
 
+ensure_gpio_permissions() {
+    echo "Ensuring ${INSTALL_USER} has GPIO permissions..."
+
+    # Add user to gpio group if not already a member
+    if ! groups "${INSTALL_USER}" | grep -q "\bgpio\b"; then
+        echo "Adding ${INSTALL_USER} to gpio group..."
+        usermod -a -G gpio "${INSTALL_USER}"
+        echo "User ${INSTALL_USER} added to gpio group. GPIO access will be available after service restart."
+    else
+        echo "User ${INSTALL_USER} is already in gpio group."
+    fi
+}
+
 configure_remote_supervisor_service() {
     echo "Configuring remote supervisor systemd service..."
     cat > /etc/systemd/system/fw-remote-supervisor.service <<SERVICE
@@ -440,6 +453,7 @@ chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${INSTALL_DIR}"
 configure_service
 ensure_remote_supervisor_config
 configure_sudoers_for_remote_supervisor
+ensure_gpio_permissions
 configure_remote_supervisor_service
 
 echo "\nInstallation complete!"
