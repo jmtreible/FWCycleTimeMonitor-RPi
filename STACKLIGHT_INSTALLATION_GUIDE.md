@@ -17,22 +17,58 @@ This guide walks you through installing the stack light control system on your R
 
 ## Part 1: Installation on Raspberry Pi
 
-### Step 1: Checkout the Feature Branch
+### Step 1: Clone or Update Repository with Feature Branch
 
-SSH into your Raspberry Pi and navigate to your repository:
+SSH into your Raspberry Pi, then choose one of the options below:
+
+#### Option A: Fresh Installation (Clone Feature Branch Directly)
+
+**Recommended for new installations:**
 
 ```bash
-# If the repository doesn't exist yet, clone it:
+# Clone the feature branch directly
+cd ~
+git clone -b feature/stack-light-control https://github.com/jmtreible/FWCycleTimeMonitor-RPi.git
+cd FWCycleTimeMonitor-RPi
+```
+
+#### Option B: Existing Repository (Update to Feature Branch)
+
+**If you already have the repository cloned:**
+
+```bash
+# Navigate to existing repository
+cd ~/FWCycleTimeMonitor-RPi
+
+# Fetch latest changes
+git fetch origin
+
+# Switch to feature branch
+git checkout feature/stack-light-control
+
+# Pull latest updates
+git pull origin feature/stack-light-control
+```
+
+#### Option C: Clone Main Repository Then Switch Branches
+
+**Standard two-step approach:**
+
+```bash
+# Clone the repository
 cd ~
 git clone https://github.com/jmtreible/FWCycleTimeMonitor-RPi.git
 cd FWCycleTimeMonitor-RPi
 
-# If the repository already exists, pull the latest changes:
-cd ~/FWCycleTimeMonitor-RPi
-git fetch origin
+# Checkout the feature branch
 git checkout feature/stack-light-control
-git pull origin feature/stack-light-control
 ```
+
+**Note:** Once the feature is tested and merged to `main`, you can use:
+```bash
+git clone https://github.com/jmtreible/FWCycleTimeMonitor-RPi.git
+```
+(No need to specify the branch - it will use `main` by default)
 
 ### Step 2: Run the Installer
 
