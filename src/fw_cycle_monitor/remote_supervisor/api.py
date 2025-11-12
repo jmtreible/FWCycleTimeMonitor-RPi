@@ -20,7 +20,7 @@ from .models import (
     StackLightState,
 )
 from .service_control import ServiceCommandError, restart_service, start_service, status_summary, stop_service
-from .settings import get_settings
+from .settings import get_settings, refresh_settings
 from .stacklight_controller import StackLightController
 
 LOGGER = logging.getLogger(__name__)
@@ -248,6 +248,13 @@ async def turn_off_stacklight(_: str | None = Depends(require_api_key)) -> Dict[
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to turn off stack lights: {e}",
         ) from e
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Refresh settings cache on startup."""
+    LOGGER.info("Refreshing settings cache on startup")
+    refresh_settings()
 
 
 @app.on_event("shutdown")
