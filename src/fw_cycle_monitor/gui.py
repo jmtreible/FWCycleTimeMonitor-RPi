@@ -14,6 +14,8 @@ from .config import AppConfig, load_config, save_config
 from .gpio_monitor import CycleMonitor
 from .metrics import AVERAGE_WINDOWS, calculate_cycle_statistics
 from .state import load_cycle_state
+from .remote_supervisor.settings import get_settings
+from .remote_supervisor.stacklight_controller import StackLightController
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ class Application(tk.Tk):
 
         self._config = load_config()
         self._status_job: Optional[str] = None
+        self._stacklight_controller: Optional[StackLightController] = None
 
         self._machine_var = tk.StringVar(value=self._config.machine_id)
         self._pin_var = tk.StringVar(value=str(self._config.gpio_pin))
@@ -42,10 +45,17 @@ class Application(tk.Tk):
         self._last_cycle_time_var = tk.StringVar(value="—")
         self._cycle_average_vars = {minutes: tk.StringVar(value="—") for minutes in AVERAGE_WINDOWS}
 
+        # Stack light status variables
+        self._stacklight_status_var = tk.StringVar(value="Not initialized")
+        self._stacklight_green_var = tk.BooleanVar(value=False)
+        self._stacklight_amber_var = tk.BooleanVar(value=False)
+        self._stacklight_red_var = tk.BooleanVar(value=False)
+
         self._build_widgets()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._refresh_service_status()
         self._schedule_status_refresh()
+        self._initialize_stacklight_controller()
 
     # UI Construction -------------------------------------------------
     def _build_widgets(self) -> None:
@@ -106,9 +116,60 @@ class Application(tk.Tk):
                 row=index, column=1, sticky="w", pady=(8, 0)
             )
 
+        # Stack Light Control Section
+        stacklight_frame = ttk.LabelFrame(frame, text="Stack Light Control", padding=12)
+        stacklight_frame.grid(row=6, column=0, columnspan=3, pady=(16, 0), sticky="ew")
+
+        # Status row
+        ttk.Label(stacklight_frame, text="Status:").grid(row=0, column=0, sticky="w")
+        ttk.Label(stacklight_frame, textvariable=self._stacklight_status_var, foreground="#555555").grid(
+            row=0, column=1, columnspan=3, sticky="w"
+        )
+
+        # Individual light controls
+        ttk.Label(stacklight_frame, text="Lights:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        self._green_check = ttk.Checkbutton(
+            stacklight_frame, text="Green", variable=self._stacklight_green_var,
+            command=lambda: self._set_stacklight_from_ui()
+        )
+        self._green_check.grid(row=1, column=1, sticky="w", pady=(8, 0))
+
+        self._amber_check = ttk.Checkbutton(
+            stacklight_frame, text="Amber", variable=self._stacklight_amber_var,
+            command=lambda: self._set_stacklight_from_ui()
+        )
+        self._amber_check.grid(row=1, column=2, sticky="w", pady=(8, 0))
+
+        self._red_check = ttk.Checkbutton(
+            stacklight_frame, text="Red", variable=self._stacklight_red_var,
+            command=lambda: self._set_stacklight_from_ui()
+        )
+        self._red_check.grid(row=1, column=3, sticky="w", pady=(8, 0))
+
+        # Quick action buttons
+        stacklight_button_frame = ttk.Frame(stacklight_frame)
+        stacklight_button_frame.grid(row=2, column=0, columnspan=4, pady=(12, 0), sticky="ew")
+
+        ttk.Button(stacklight_button_frame, text="Test Sequence", command=self._test_stacklight).grid(
+            row=0, column=0, padx=(0, 8)
+        )
+        ttk.Button(stacklight_button_frame, text="All Off", command=self._turn_off_all_stacklights).grid(
+            row=0, column=1, padx=(0, 8)
+        )
+        ttk.Button(stacklight_button_frame, text="Green Only", command=lambda: self._quick_set(True, False, False)).grid(
+            row=0, column=2, padx=(0, 8)
+        )
+        ttk.Button(stacklight_button_frame, text="Amber Only", command=lambda: self._quick_set(False, True, False)).grid(
+            row=0, column=3, padx=(0, 8)
+        )
+        ttk.Button(stacklight_button_frame, text="Red Only", command=lambda: self._quick_set(False, False, True)).grid(
+            row=0, column=4
+        )
+
         version = self._resolve_version()
         ttk.Label(frame, text=f"Version: {version}", foreground="#555555").grid(
-            row=6, column=0, columnspan=3, sticky="w", pady=(16, 0)
+            row=7, column=0, columnspan=3, sticky="w", pady=(16, 0)
         )
 
     # Actions ---------------------------------------------------------
@@ -339,6 +400,147 @@ class Application(tk.Tk):
         except Exception:  # pragma: no cover - metadata lookup
             return "development"
 
+    def _initialize_stacklight_controller(self) -> None:
+        """Initialize the stack light controller with settings from config."""
+        try:
+            settings = get_settings()
+            if not settings.stacklight.enabled:
+                self._stacklight_status_var.set("Disabled in configuration")
+                return
+
+            pins = {
+                "green": settings.stacklight.green_pin,
+                "amber": settings.stacklight.amber_pin,
+                "red": settings.stacklight.red_pin,
+            }
+
+            self._stacklight_controller = StackLightController(
+                pins=pins,
+                mock_mode=settings.stacklight.mock_mode,
+                active_low=settings.stacklight.active_low
+            )
+
+            mode = "MOCK MODE" if settings.stacklight.mock_mode else "Hardware Mode"
+            active_type = "active-low" if settings.stacklight.active_low else "active-high"
+            self._stacklight_status_var.set(f"Ready ({mode}, {active_type})")
+            self._refresh_stacklight_state()
+            LOGGER.info("Stack light controller initialized in GUI")
+
+        except Exception as exc:
+            LOGGER.error(f"Failed to initialize stack light controller: {exc}", exc_info=True)
+            self._stacklight_status_var.set(f"Error: {exc}")
+
+    def _refresh_stacklight_state(self) -> None:
+        """Refresh the UI to show current stack light state."""
+        if self._stacklight_controller is None:
+            return
+
+        try:
+            state = self._stacklight_controller.get_light_state()
+            self._stacklight_green_var.set(state["green"])
+            self._stacklight_amber_var.set(state["amber"])
+            self._stacklight_red_var.set(state["red"])
+        except Exception as exc:
+            LOGGER.error(f"Failed to refresh stack light state: {exc}", exc_info=True)
+
+    def _set_stacklight_from_ui(self) -> None:
+        """Set stack light state from checkbox values."""
+        if self._stacklight_controller is None:
+            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+            return
+
+        try:
+            green = self._stacklight_green_var.get()
+            amber = self._stacklight_amber_var.get()
+            red = self._stacklight_red_var.get()
+
+            result = self._stacklight_controller.set_light_state(green, amber, red)
+
+            if not result["success"]:
+                messagebox.showerror(
+                    "Stack Light Error",
+                    f"Failed to set lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+        except Exception as exc:
+            LOGGER.error(f"Failed to set stack light: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to control stack lights: {exc}", parent=self)
+
+    def _quick_set(self, green: bool, amber: bool, red: bool) -> None:
+        """Quick set stack lights to specific pattern."""
+        if self._stacklight_controller is None:
+            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+            return
+
+        try:
+            result = self._stacklight_controller.set_light_state(green, amber, red)
+
+            if result["success"]:
+                self._refresh_stacklight_state()
+            else:
+                messagebox.showerror(
+                    "Stack Light Error",
+                    f"Failed to set lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+        except Exception as exc:
+            LOGGER.error(f"Failed to set stack light: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to control stack lights: {exc}", parent=self)
+
+    def _test_stacklight(self) -> None:
+        """Run test sequence on stack lights."""
+        if self._stacklight_controller is None:
+            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+            return
+
+        try:
+            # Disable buttons during test
+            self._stacklight_status_var.set("Running test sequence...")
+            self.update()
+
+            result = self._stacklight_controller.test_sequence()
+
+            if result["success"]:
+                self._stacklight_status_var.set(f"Test complete ({result.get('duration_seconds', 0)}s)")
+                self._refresh_stacklight_state()
+            else:
+                self._stacklight_status_var.set("Test failed")
+                messagebox.showerror(
+                    "Stack Light Error",
+                    f"Test sequence failed: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+        except Exception as exc:
+            LOGGER.error(f"Stack light test failed: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Test sequence failed: {exc}", parent=self)
+        finally:
+            # Restore status
+            settings = get_settings()
+            mode = "MOCK MODE" if settings.stacklight.mock_mode else "Hardware Mode"
+            active_type = "active-low" if settings.stacklight.active_low else "active-high"
+            self._stacklight_status_var.set(f"Ready ({mode}, {active_type})")
+
+    def _turn_off_all_stacklights(self) -> None:
+        """Turn off all stack lights."""
+        if self._stacklight_controller is None:
+            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+            return
+
+        try:
+            result = self._stacklight_controller.turn_off_all()
+
+            if result["success"]:
+                self._refresh_stacklight_state()
+            else:
+                messagebox.showerror(
+                    "Stack Light Error",
+                    f"Failed to turn off lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+        except Exception as exc:
+            LOGGER.error(f"Failed to turn off stack lights: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to turn off stack lights: {exc}", parent=self)
+
     def _on_close(self) -> None:
         if self._status_job is not None:
             try:
@@ -346,6 +548,14 @@ class Application(tk.Tk):
             except Exception:  # pragma: no cover - defensive cleanup
                 LOGGER.debug("Failed to cancel scheduled status refresh", exc_info=True)
             self._status_job = None
+
+        # Cleanup stack light controller
+        if self._stacklight_controller is not None:
+            try:
+                self._stacklight_controller.cleanup()
+            except Exception:  # pragma: no cover - defensive cleanup
+                LOGGER.debug("Failed to cleanup stack light controller", exc_info=True)
+
         self.destroy()
 
 
