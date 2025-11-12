@@ -295,6 +295,33 @@ print(secrets.token_urlsafe(32))
 PY
 }
 
+detect_ip_address() {
+    # Try to detect the primary IP address (preferring non-localhost)
+    local ip_address
+
+    # Try hostname -I first (most reliable on Raspberry Pi)
+    if command -v hostname >/dev/null 2>&1; then
+        ip_address=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+
+    # Fallback to ip command
+    if [[ -z "${ip_address}" ]] && command -v ip >/dev/null 2>&1; then
+        ip_address=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+')
+    fi
+
+    # Fallback to ifconfig
+    if [[ -z "${ip_address}" ]] && command -v ifconfig >/dev/null 2>&1; then
+        ip_address=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -n1)
+    fi
+
+    # Final fallback to 0.0.0.0
+    if [[ -z "${ip_address}" ]]; then
+        ip_address="0.0.0.0"
+    fi
+
+    echo "${ip_address}"
+}
+
 ensure_remote_supervisor_config() {
     echo "Ensuring remote supervisor configuration at ${REMOTE_SUPERVISOR_CONFIG}..."
     mkdir -p "${CONFIG_HOME}"
@@ -307,9 +334,13 @@ ensure_remote_supervisor_config() {
     local api_key
     api_key="$(generate_remote_supervisor_api_key)"
 
+    local host_ip
+    host_ip="$(detect_ip_address)"
+    echo "Detected IP address: ${host_ip}"
+
     cat > "${REMOTE_SUPERVISOR_CONFIG}" <<CONFIG
 {
-  "host": "0.0.0.0",
+  "host": "${host_ip}",
   "port": 8443,
   "unit_name": "fw-cycle-monitor.service",
   "api_keys": [
@@ -317,7 +348,17 @@ ensure_remote_supervisor_config() {
   ],
   "certfile": null,
   "keyfile": null,
-  "metrics_enabled": true
+  "metrics_enabled": true,
+  "stacklight": {
+    "enabled": true,
+    "mock_mode": true,
+    "active_low": true,
+    "pins": {
+      "green": 26,
+      "amber": 20,
+      "red": 21
+    }
+  }
 }
 CONFIG
 
@@ -326,6 +367,10 @@ CONFIG
 
     echo "Generated remote supervisor API key: ${api_key}"
     echo "Store this key securely. It is required for remote CLI access."
+    echo ""
+    echo "Stack light control is enabled in MOCK MODE by default."
+    echo "To enable hardware control, edit ${REMOTE_SUPERVISOR_CONFIG}"
+    echo "and set 'mock_mode' to false under the 'stacklight' section."
 }
 
 configure_sudoers_for_remote_supervisor() {

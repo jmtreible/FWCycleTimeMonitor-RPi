@@ -164,7 +164,18 @@ class Application(tk.Tk):
             row=0, column=3, padx=(0, 8)
         )
         ttk.Button(stacklight_button_frame, text="Red Only", command=lambda: self._quick_set(False, False, True)).grid(
-            row=0, column=4
+            row=0, column=4, padx=(0, 8)
+        )
+
+        # Config reload button
+        stacklight_reload_frame = ttk.Frame(stacklight_frame)
+        stacklight_reload_frame.grid(row=3, column=0, columnspan=4, pady=(8, 0), sticky="ew")
+
+        ttk.Button(stacklight_reload_frame, text="Reload Config", command=self._reload_stacklight_config).grid(
+            row=0, column=0
+        )
+        ttk.Label(stacklight_reload_frame, text="(Use after changing mock_mode in config file)", foreground="#777777", font=("TkDefaultFont", 8)).grid(
+            row=0, column=1, padx=(8, 0), sticky="w"
         )
 
         version = self._resolve_version()
@@ -540,6 +551,29 @@ class Application(tk.Tk):
         except Exception as exc:
             LOGGER.error(f"Failed to turn off stack lights: {exc}", exc_info=True)
             messagebox.showerror("Error", f"Failed to turn off stack lights: {exc}", parent=self)
+
+    def _reload_stacklight_config(self) -> None:
+        """Reload stack light configuration and reinitialize controller."""
+        try:
+            # Clean up existing controller
+            if self._stacklight_controller is not None:
+                try:
+                    self._stacklight_controller.cleanup()
+                except Exception as cleanup_exc:
+                    LOGGER.warning(f"Error during cleanup: {cleanup_exc}")
+                self._stacklight_controller = None
+
+            # Reinitialize with new config
+            self._initialize_stacklight_controller()
+
+            messagebox.showinfo(
+                "Config Reloaded",
+                "Stack light configuration reloaded successfully.\nCheck the status line for current mode.",
+                parent=self
+            )
+        except Exception as exc:
+            LOGGER.error(f"Failed to reload stack light config: {exc}", exc_info=True)
+            messagebox.showerror("Error", f"Failed to reload config: {exc}", parent=self)
 
     def _on_close(self) -> None:
         if self._status_job is not None:
