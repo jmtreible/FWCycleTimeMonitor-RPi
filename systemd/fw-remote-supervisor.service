@@ -9,6 +9,7 @@ WorkingDirectory=/opt/fw-cycle-monitor
 ExecStart=/opt/fw-cycle-monitor/.venv/bin/python -m fw_cycle_monitor.remote_supervisor.server --reload-settings
 User=fwmonitor
 Group=fwmonitor
+SupplementaryGroups=gpio
 Restart=on-failure
 RestartSec=5
 

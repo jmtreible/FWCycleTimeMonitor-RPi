@@ -417,6 +417,7 @@ Wants=network-online.target
 Type=simple
 User=${INSTALL_USER}
 Group=${INSTALL_GROUP}
+SupplementaryGroups=gpio
 Environment=FW_CYCLE_MONITOR_CONFIG_DIR=${CONFIG_HOME}
 Environment=FW_CYCLE_MONITOR_REPO=${INSTALL_DIR}
 Environment=FW_CYCLE_MONITOR_INSTALL_EXTRAS=${INSTALL_EXTRAS}
