@@ -599,9 +599,9 @@ class Application(tk.Tk):
 
             LOGGER.info("Restarting fw-remote-supervisor service...")
 
-            # Restart the service
+            # Restart the service (using sudo - sudoers configured for NOPASSWD)
             result = subprocess.run(
-                ["systemctl", "restart", "fw-remote-supervisor.service"],
+                ["sudo", "systemctl", "restart", "fw-remote-supervisor.service"],
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -625,7 +625,7 @@ class Application(tk.Tk):
 
             # Check if service is running
             check_result = subprocess.run(
-                ["systemctl", "is-active", "fw-remote-supervisor.service"],
+                ["sudo", "systemctl", "is-active", "fw-remote-supervisor.service"],
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
