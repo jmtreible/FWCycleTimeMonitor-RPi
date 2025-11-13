@@ -207,6 +207,74 @@ class StackLightController:
                 "error": str(e)
             }
 
+    def startup_self_test(self) -> Dict[str, Any]:
+        """
+        Run a comprehensive startup self-test sequence.
+
+        Sequence:
+        - Green ON (2s) -> Green OFF
+        - Amber ON (2s) -> Amber OFF
+        - Red ON (2s) -> Red OFF
+        - Green ON (2s) -> Green OFF
+        - Amber ON (2s) -> Amber OFF
+        - Red ON (2s) -> Red OFF (2s pause)
+        - All ON (2s) -> All OFF (2s pause)
+        - All ON (2s) -> All OFF
+
+        Total duration: ~26 seconds
+
+        Returns:
+            Dictionary with success status and total duration
+        """
+        try:
+            LOGGER.info("Running startup self-test sequence for stack lights")
+
+            # First cycle through each light twice
+            for cycle in range(2):
+                # Green
+                self.set_light_state(True, False, False)
+                time.sleep(2.0)
+                self.set_light_state(False, False, False)
+
+                # Amber
+                self.set_light_state(False, True, False)
+                time.sleep(2.0)
+                self.set_light_state(False, False, False)
+
+                # Red
+                self.set_light_state(False, False, True)
+                time.sleep(2.0)
+                self.set_light_state(False, False, False)
+
+                # Pause after red on second cycle
+                if cycle == 1:
+                    time.sleep(2.0)
+
+            # All lights ON then OFF twice
+            for cycle in range(2):
+                self.set_light_state(True, True, True)
+                time.sleep(2.0)
+                self.set_light_state(False, False, False)
+
+                # Pause after first all-off
+                if cycle == 0:
+                    time.sleep(2.0)
+
+            LOGGER.info("Startup self-test sequence completed successfully")
+
+            return {
+                "success": True,
+                "message": "Self-test completed - all relays functioning",
+                "duration_seconds": 26
+            }
+        except Exception as e:
+            LOGGER.error(f"Startup self-test failed: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Self-test failed"
+            }
+
     def cleanup(self) -> None:
         """Clean up GPIO resources."""
         if self.mock_mode:

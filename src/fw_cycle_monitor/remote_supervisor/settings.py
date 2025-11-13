@@ -31,6 +31,7 @@ class StackLightSettings:
     enabled: bool = True
     mock_mode: bool = False
     active_low: bool = True
+    startup_self_test: bool = True
     green_pin: int = 26
     amber_pin: int = 20
     red_pin: int = 21
@@ -133,6 +134,7 @@ def load_settings() -> RemoteSupervisorSettings:
             enabled=stacklight_data.get("enabled", True),
             mock_mode=stacklight_data.get("mock_mode", False),
             active_low=stacklight_data.get("active_low", True),
+            startup_self_test=stacklight_data.get("startup_self_test", True),
             green_pin=stacklight_data.get("pins", {}).get("green", 26),
             amber_pin=stacklight_data.get("pins", {}).get("amber", 20),
             red_pin=stacklight_data.get("pins", {}).get("red", 21),

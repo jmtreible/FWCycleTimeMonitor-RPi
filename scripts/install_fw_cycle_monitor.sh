@@ -353,6 +353,7 @@ ensure_remote_supervisor_config() {
     "enabled": true,
     "mock_mode": true,
     "active_low": true,
+    "startup_self_test": true,
     "pins": {
       "green": 26,
       "amber": 20,

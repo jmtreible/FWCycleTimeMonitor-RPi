@@ -252,9 +252,24 @@ async def turn_off_stacklight(_: str | None = Depends(require_api_key)) -> Dict[
 
 @app.on_event("startup")
 async def startup_event():
-    """Refresh settings cache on startup."""
+    """Refresh settings cache and run startup self-test on startup."""
     LOGGER.info("Refreshing settings cache on startup")
     refresh_settings()
+
+    # Run startup self-test if stack lights are enabled
+    settings = get_settings()
+    if settings.stacklight.enabled and settings.stacklight.startup_self_test:
+        try:
+            LOGGER.info("Initializing stack light controller for startup self-test")
+            controller = _get_stacklight_controller()
+            result = controller.startup_self_test()
+
+            if result["success"]:
+                LOGGER.info(f"Stack light startup self-test completed: {result.get('message')}")
+            else:
+                LOGGER.warning(f"Stack light startup self-test failed: {result.get('error')}")
+        except Exception as e:
+            LOGGER.error(f"Failed to run stack light startup self-test: {e}", exc_info=True)
 
 
 @app.on_event("shutdown")
