@@ -3,8 +3,10 @@
 @using FWCycleDashboard.Data
 @using FWCycleDashboard.Services
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
 @inject ApplicationDbContext DbContext
 @inject RemoteSupervisorClient SupervisorClient
+@inject IJSRuntime JSRuntime
 @implements IDisposable
 
 <PageTitle>Dashboard</PageTitle>
@@ -22,7 +24,73 @@
     <button class="btn btn-secondary ms-2" @onclick="ToggleAutoRefresh">
         Auto-Refresh: @(autoRefreshEnabled ? "On" : "Off")
     </button>
+    <button class="btn btn-info ms-2" @onclick="ToggleBulkActions">
+        Bulk Actions: @(showBulkActions ? "Hide" : "Show")
+    </button>
 </div>
+
+@if (showBulkActions && machineStatuses != null && machineStatuses.Any())
+{
+    <div class="card mb-3 bg-light">
+        <div class="card-header">
+            <strong>Bulk Operations</strong>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label class="form-label"><strong>Target:</strong></label>
+                    <select class="form-select" @bind="bulkTarget">
+                        <option value="all">All Machines</option>
+                        @foreach (var group in groups)
+                        {
+                            <option value="group-@group.Id">Group: @group.Name</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="btn-toolbar" role="toolbar">
+                        <div class="btn-group me-2 mb-2" role="group">
+                            <button class="btn btn-danger" @onclick="BulkRebootPi" disabled="@isBulkOperating">
+                                @if (isBulkOperating && currentBulkOp == "reboot")
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2"></span>
+                                }
+                                Reboot Pi
+                            </button>
+                        </div>
+
+                        <div class="btn-group me-2 mb-2" role="group">
+                            <button class="btn btn-outline-success" @onclick="() => BulkStackLight(true, false, false)" disabled="@isBulkOperating">Green</button>
+                            <button class="btn btn-outline-warning" @onclick="() => BulkStackLight(false, true, false)" disabled="@isBulkOperating">Amber</button>
+                            <button class="btn btn-outline-danger" @onclick="() => BulkStackLight(false, false, true)" disabled="@isBulkOperating">Red</button>
+                            <button class="btn btn-outline-secondary" @onclick="() => BulkStackLight(false, false, false)" disabled="@isBulkOperating">All Off</button>
+                        </div>
+
+                        <div class="btn-group mb-2" role="group">
+                            <button class="btn btn-outline-primary" @onclick="BulkTestStackLight" disabled="@isBulkOperating">
+                                @if (isBulkOperating && currentBulkOp == "test")
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2"></span>
+                                }
+                                Test Lights
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(bulkOperationStatus))
+                    {
+                        <div class="alert alert-info mt-2">
+                            @bulkOperationStatus
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
 
 @if (machineStatuses == null)
 {
@@ -143,6 +211,11 @@ else
                                 <button class="btn btn-sm btn-warning" @onclick="() => RestartService(machine)" disabled="@(!status.IsOnline)">Restart</button>
                                 <button class="btn btn-sm btn-danger" @onclick="() => StopService(machine)" disabled="@(!status.IsOnline)">Stop</button>
                             </div>
+                            <div class="mb-2">
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => RebootPi(machine)" disabled="@(!status.IsOnline)">
+                                    Reboot Pi
+                                </button>
+                            </div>
 
                             @if (status.StackLight != null)
                             {
@@ -195,9 +268,15 @@ else
 
 @code {
     private List<Machine> machines = new();
+    private List<MachineGroup> groups = new();
     private List<MachineStatus>? machineStatuses;
     private bool isRefreshing = false;
     private bool autoRefreshEnabled = true;
+    private bool showBulkActions = false;
+    private bool isBulkOperating = false;
+    private string bulkTarget = "all";
+    private string? bulkOperationStatus;
+    private string? currentBulkOp;
     private System.Threading.Timer? refreshTimer;
 
     protected override async Task OnInitializedAsync()
@@ -210,6 +289,13 @@ else
     private async Task LoadMachines()
     {
         machines = await DbContext.Machines.Include(m => m.Group).ToListAsync();
+        groups = await DbContext.MachineGroups.ToListAsync();
+    }
+
+    private void ToggleBulkActions()
+    {
+        showBulkActions = !showBulkActions;
+        bulkOperationStatus = null;
     }
 
     private async Task RefreshAll()
@@ -412,6 +498,207 @@ else
         // Extract number from strings like "5min", "15min", "30min", "60min"
         var numericPart = new string(windowKey.TakeWhile(char.IsDigit).ToArray());
         return int.TryParse(numericPart, out var minutes) ? minutes : int.MaxValue;
+    }
+
+    private async Task RebootPi(Machine machine)
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>(
+            "confirm",
+            $"Reboot {machine.MachineId}? The Raspberry Pi will restart and may take 1-2 minutes to come back online."
+        );
+
+        if (!confirmed) return;
+
+        var (success, error) = await SupervisorClient.RebootPiAsync(machine);
+
+        DbContext.CommandHistory.Add(new CommandHistory
+        {
+            MachineId = machine.Id,
+            Command = "system: reboot",
+            Success = success,
+            Error = error
+        });
+        await DbContext.SaveChangesAsync();
+
+        // Pi will be offline during reboot, wait 30 seconds before refresh
+        await Task.Delay(30000);
+        await RefreshAll();
+    }
+
+    private List<Machine> GetTargetMachines()
+    {
+        if (bulkTarget == "all")
+        {
+            return machines;
+        }
+        else if (bulkTarget.StartsWith("group-"))
+        {
+            var groupId = int.Parse(bulkTarget.Substring(6));
+            return machines.Where(m => m.GroupId == groupId).ToList();
+        }
+        return new List<Machine>();
+    }
+
+    private async Task BulkRebootPi()
+    {
+        var targetMachines = GetTargetMachines();
+        var onlineMachines = targetMachines
+            .Where(m => machineStatuses?.FirstOrDefault(s => s.MachineId == m.Id)?.IsOnline == true)
+            .ToList();
+
+        if (!onlineMachines.Any())
+        {
+            bulkOperationStatus = "No online machines found in selection.";
+            return;
+        }
+
+        var confirmed = await JSRuntime.InvokeAsync<bool>(
+            "confirm",
+            $"Reboot {onlineMachines.Count} machine(s)? All selected Raspberry Pis will restart."
+        );
+
+        if (!confirmed) return;
+
+        isBulkOperating = true;
+        currentBulkOp = "reboot";
+        bulkOperationStatus = $"Rebooting {onlineMachines.Count} machine(s)...";
+        StateHasChanged();
+
+        try
+        {
+            var tasks = onlineMachines.Select(async machine =>
+            {
+                var (success, error) = await SupervisorClient.RebootPiAsync(machine);
+                DbContext.CommandHistory.Add(new CommandHistory
+                {
+                    MachineId = machine.Id,
+                    Command = "system: reboot (bulk)",
+                    Success = success,
+                    Error = error
+                });
+                return (machine, success, error);
+            });
+
+            var results = await Task.WhenAll(tasks);
+            await DbContext.SaveChangesAsync();
+
+            var successCount = results.Count(r => r.success);
+            bulkOperationStatus = $"Reboot initiated: {successCount}/{onlineMachines.Count} successful. Waiting 30s...";
+            StateHasChanged();
+
+            await Task.Delay(30000);
+            await RefreshAll();
+
+            bulkOperationStatus = $"Reboot complete: {successCount}/{onlineMachines.Count} machines rebooted.";
+        }
+        finally
+        {
+            isBulkOperating = false;
+            currentBulkOp = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task BulkStackLight(bool green, bool amber, bool red)
+    {
+        var targetMachines = GetTargetMachines();
+        var onlineMachines = targetMachines
+            .Where(m => machineStatuses?.FirstOrDefault(s => s.MachineId == m.Id)?.IsOnline == true)
+            .ToList();
+
+        if (!onlineMachines.Any())
+        {
+            bulkOperationStatus = "No online machines found in selection.";
+            return;
+        }
+
+        isBulkOperating = true;
+        var lightState = green ? "Green" : amber ? "Amber" : red ? "Red" : "Off";
+        bulkOperationStatus = $"Setting {onlineMachines.Count} machine(s) to {lightState}...";
+        StateHasChanged();
+
+        try
+        {
+            var tasks = onlineMachines.Select(async machine =>
+            {
+                var (success, error) = await SupervisorClient.SetStackLightAsync(machine, green, amber, red);
+                DbContext.CommandHistory.Add(new CommandHistory
+                {
+                    MachineId = machine.Id,
+                    Command = $"stacklight (bulk): G={green} A={amber} R={red}",
+                    Success = success,
+                    Error = error
+                });
+                return (machine, success, error);
+            });
+
+            var results = await Task.WhenAll(tasks);
+            await DbContext.SaveChangesAsync();
+
+            var successCount = results.Count(r => r.success);
+            bulkOperationStatus = $"Stack lights updated: {successCount}/{onlineMachines.Count} successful.";
+
+            await Task.Delay(500);
+            await RefreshAll();
+        }
+        finally
+        {
+            isBulkOperating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task BulkTestStackLight()
+    {
+        var targetMachines = GetTargetMachines();
+        var onlineMachines = targetMachines
+            .Where(m => machineStatuses?.FirstOrDefault(s => s.MachineId == m.Id)?.IsOnline == true)
+            .ToList();
+
+        if (!onlineMachines.Any())
+        {
+            bulkOperationStatus = "No online machines found in selection.";
+            return;
+        }
+
+        isBulkOperating = true;
+        currentBulkOp = "test";
+        bulkOperationStatus = $"Testing lights on {onlineMachines.Count} machine(s)... (8 seconds)";
+        StateHasChanged();
+
+        try
+        {
+            var tasks = onlineMachines.Select(async machine =>
+            {
+                var (success, error) = await SupervisorClient.TestStackLightAsync(machine);
+                DbContext.CommandHistory.Add(new CommandHistory
+                {
+                    MachineId = machine.Id,
+                    Command = "stacklight: test (bulk)",
+                    Success = success,
+                    Error = error
+                });
+                return (machine, success, error);
+            });
+
+            var results = await Task.WhenAll(tasks);
+            await DbContext.SaveChangesAsync();
+
+            var successCount = results.Count(r => r.success);
+            bulkOperationStatus = $"Test initiated: {successCount}/{onlineMachines.Count} successful. Waiting for test completion...";
+            StateHasChanged();
+
+            await Task.Delay(9000);
+            await RefreshAll();
+
+            bulkOperationStatus = $"Test complete: {successCount}/{onlineMachines.Count} machines tested.";
+        }
+        finally
+        {
+            isBulkOperating = false;
+            currentBulkOp = null;
+            StateHasChanged();
+        }
     }
 
     public void Dispose()

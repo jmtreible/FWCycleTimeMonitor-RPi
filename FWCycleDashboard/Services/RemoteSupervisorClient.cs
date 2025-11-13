@@ -138,6 +138,23 @@ public class RemoteSupervisorClient
         }
     }
 
+    public async Task<(bool Success, string? Error)> RebootPiAsync(Machine machine)
+    {
+        try
+        {
+            using var client = CreateClient(machine);
+            var response = await client.PostAsync("/system/reboot", null);
+            response.EnsureSuccessStatusCode();
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reboot machine {MachineId} at {IpAddress}",
+                machine.MachineId, machine.IpAddress);
+            return (false, ex.Message);
+        }
+    }
+
     public async Task<StackLightState?> GetStackLightStatusAsync(Machine machine)
     {
         try

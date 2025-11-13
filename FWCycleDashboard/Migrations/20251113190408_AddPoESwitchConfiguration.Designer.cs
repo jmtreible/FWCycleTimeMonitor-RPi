@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FWCycleDashboard.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251113164111_AddPoESwitchConfiguration")]
+    [Migration("20251113190408_AddPoESwitchConfiguration")]
     partial class AddPoESwitchConfiguration
     {
         /// <inheritdoc />

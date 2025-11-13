@@ -87,6 +87,30 @@ async def restart(_: str | None = Depends(require_api_key)) -> Dict[str, Any]:
         ) from exc
 
 
+@app.post("/system/reboot", response_model=ServiceActionResponse)
+async def reboot_system(_: str | None = Depends(require_api_key)) -> Dict[str, Any]:
+    """Reboot the Raspberry Pi system."""
+    import subprocess
+
+    try:
+        LOGGER.warning("System reboot requested via API")
+        # Schedule reboot in 5 seconds to allow response to be sent
+        subprocess.Popen(["sudo", "shutdown", "-r", "+0.08"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
+        return {
+            "action": "reboot",
+            "success": True,
+            "message": "System reboot initiated - Pi will restart in 5 seconds"
+        }
+    except Exception as exc:
+        LOGGER.error("Failed to initiate system reboot: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate system reboot: {exc}",
+        ) from exc
+
+
 @app.get("/config", response_model=ConfigSnapshot)
 async def config(_: str | None = Depends(require_api_key)) -> Dict[str, Any]:
     """Return the currently active monitor configuration."""
