@@ -69,3 +69,11 @@ class StackLightResponse(BaseModel):
     message: Optional[str] = Field(None, description="Status or error message")
     timestamp: Optional[str] = Field(None, description="ISO timestamp of response")
     error: Optional[str] = Field(None, description="Error details if failed")
+
+
+class SystemActionResponse(BaseModel):
+    """Response from system-level operations like reboot."""
+
+    action: str = Field(..., description="Action requested by the client")
+    success: bool = Field(..., description="Whether the operation succeeded")
+    message: str = Field(..., description="Status or error message")

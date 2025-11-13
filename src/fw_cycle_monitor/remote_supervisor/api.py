@@ -18,6 +18,7 @@ from .models import (
     StackLightResponse,
     StackLightSetRequest,
     StackLightState,
+    SystemActionResponse,
 )
 from .service_control import ServiceCommandError, restart_service, start_service, status_summary, stop_service
 from .settings import get_settings, refresh_settings
@@ -87,7 +88,7 @@ async def restart(_: str | None = Depends(require_api_key)) -> Dict[str, Any]:
         ) from exc
 
 
-@app.post("/system/reboot", response_model=ServiceActionResponse)
+@app.post("/system/reboot", response_model=SystemActionResponse)
 async def reboot_system(_: str | None = Depends(require_api_key)) -> Dict[str, Any]:
     """Reboot the Raspberry Pi system."""
     import subprocess
