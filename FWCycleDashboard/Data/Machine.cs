@@ -32,6 +32,12 @@ public class Machine
 
     public bool UseHttps { get; set; } = false;
 
+    // PoE Switch Configuration for Remote Boot
+    [StringLength(100)]
+    public string? PoESwitchIp { get; set; }
+
+    public int? PoESwitchPort { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastSeenAt { get; set; }
 
