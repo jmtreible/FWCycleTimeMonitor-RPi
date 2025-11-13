@@ -101,6 +101,41 @@ else
                                     <p><small>Uptime: @FormatUptime(status.Status.UptimeSeconds.Value)</small></p>
                                 }
                             }
+
+                            @if (status.IsOnline && status.Metrics != null)
+                            {
+                                <div class="border-top mt-2 pt-2">
+                                    <small class="text-muted d-block mb-1"><strong>Cycle Times:</strong></small>
+                                    @if (status.Metrics.LastCycleSeconds.HasValue)
+                                    {
+                                        <p class="mb-1"><small><strong>Last:</strong> @FormatCycleTime(status.Metrics.LastCycleSeconds.Value)</small></p>
+                                    }
+                                    else
+                                    {
+                                        <p class="mb-1"><small><strong>Last:</strong> No data</small></p>
+                                    }
+
+                                    @if (status.Metrics.WindowAverages != null && status.Metrics.WindowAverages.Any())
+                                    {
+                                        @foreach (var window in status.Metrics.WindowAverages.OrderBy(w => ParseWindowMinutes(w.Key)))
+                                        {
+                                            <p class="mb-1">
+                                                <small>
+                                                    <strong>@window.Key avg:</strong>
+                                                    @if (window.Value.HasValue)
+                                                    {
+                                                        @FormatCycleTime(window.Value.Value)
+                                                    }
+                                                    else
+                                                    {
+                                                        <text>No data</text>
+                                                    }
+                                                </small>
+                                            </p>
+                                        }
+                                    }
+                                </div>
+                            }
                         </div>
                         <div class="card-footer">
                             <div class="mb-2">
@@ -365,6 +400,18 @@ else
         }
 
         return timestamp;
+    }
+
+    private string FormatCycleTime(double seconds)
+    {
+        return $"{seconds:F1}s";
+    }
+
+    private int ParseWindowMinutes(string windowKey)
+    {
+        // Extract number from strings like "5min", "15min", "30min", "60min"
+        var numericPart = new string(windowKey.TakeWhile(char.IsDigit).ToArray());
+        return int.TryParse(numericPart, out var minutes) ? minutes : int.MaxValue;
     }
 
     public void Dispose()
