@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
 import tkinter as tk
+import urllib.request
+import urllib.error
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .config import AppConfig, load_config, save_config
 from .gpio_monitor import CycleMonitor
 from .metrics import AVERAGE_WINDOWS, calculate_cycle_statistics
 from .state import load_cycle_state
 from .remote_supervisor.settings import get_settings, refresh_settings
-from .remote_supervisor.stacklight_controller import StackLightController
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +35,8 @@ class Application(tk.Tk):
 
         self._config = load_config()
         self._status_job: Optional[str] = None
-        self._stacklight_controller: Optional[StackLightController] = None
+        self._api_base_url: Optional[str] = None
+        self._api_key: Optional[str] = None
 
         self._machine_var = tk.StringVar(value=self._config.machine_id)
         self._pin_var = tk.StringVar(value=str(self._config.gpio_pin))
@@ -55,7 +58,7 @@ class Application(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._refresh_service_status()
         self._schedule_status_refresh()
-        self._initialize_stacklight_controller()
+        self._initialize_stacklight_api()
 
     # UI Construction -------------------------------------------------
     def _build_widgets(self) -> None:
@@ -414,53 +417,80 @@ class Application(tk.Tk):
         except Exception:  # pragma: no cover - metadata lookup
             return "development"
 
-    def _initialize_stacklight_controller(self) -> None:
-        """Initialize the stack light controller with settings from config."""
+    def _initialize_stacklight_api(self) -> None:
+        """Initialize connection to stack light API."""
         try:
             settings = get_settings()
             if not settings.stacklight.enabled:
                 self._stacklight_status_var.set("Disabled in configuration")
                 return
 
-            pins = {
-                "green": settings.stacklight.green_pin,
-                "amber": settings.stacklight.amber_pin,
-                "red": settings.stacklight.red_pin,
-            }
-
-            self._stacklight_controller = StackLightController(
-                pins=pins,
-                mock_mode=settings.stacklight.mock_mode,
-                active_low=settings.stacklight.active_low
-            )
+            # Get API configuration
+            self._api_base_url = f"http://{settings.host}:{settings.port}"
+            if settings.api_keys and len(settings.api_keys) > 0:
+                self._api_key = settings.api_keys[0]
+            else:
+                self._stacklight_status_var.set("Error: No API key configured")
+                LOGGER.error("No API key found in remote supervisor configuration")
+                return
 
             mode = "MOCK MODE" if settings.stacklight.mock_mode else "Hardware Mode"
-            active_type = "active-low" if settings.stacklight.active_low else "active-high"
-            self._stacklight_status_var.set(f"Ready ({mode}, {active_type})")
+            self._stacklight_status_var.set(f"Ready (API mode - {mode})")
             self._refresh_stacklight_state()
-            LOGGER.info("Stack light controller initialized in GUI")
+            LOGGER.info(f"Stack light API initialized - connecting to {self._api_base_url}")
 
         except Exception as exc:
-            LOGGER.error(f"Failed to initialize stack light controller: {exc}", exc_info=True)
+            LOGGER.error(f"Failed to initialize stack light API: {exc}", exc_info=True)
             self._stacklight_status_var.set(f"Error: {exc}")
+
+    def _api_request(self, endpoint: str, method: str = "GET", data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Make an HTTP request to the remote supervisor API."""
+        if not self._api_base_url or not self._api_key:
+            return None
+
+        url = f"{self._api_base_url}{endpoint}"
+        headers = {"X-API-Key": self._api_key}
+
+        try:
+            if method == "GET":
+                req = urllib.request.Request(url, headers=headers)
+            else:  # POST
+                headers["Content-Type"] = "application/json"
+                json_data = json.dumps(data).encode('utf-8') if data else None
+                req = urllib.request.Request(url, data=json_data, headers=headers, method=method)
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                response_data = response.read().decode('utf-8')
+                return json.loads(response_data) if response_data else {}
+
+        except urllib.error.HTTPError as exc:
+            LOGGER.error(f"HTTP {exc.code} error from API {endpoint}: {exc.reason}")
+            return None
+        except urllib.error.URLError as exc:
+            LOGGER.error(f"URL error from API {endpoint}: {exc.reason}")
+            return None
+        except Exception as exc:
+            LOGGER.error(f"Failed to make API request to {endpoint}: {exc}", exc_info=True)
+            return None
 
     def _refresh_stacklight_state(self) -> None:
         """Refresh the UI to show current stack light state."""
-        if self._stacklight_controller is None:
+        if not self._api_base_url or not self._api_key:
             return
 
         try:
-            state = self._stacklight_controller.get_light_state()
-            self._stacklight_green_var.set(state["green"])
-            self._stacklight_amber_var.set(state["amber"])
-            self._stacklight_red_var.set(state["red"])
+            state = self._api_request("/stacklight/status")
+            if state:
+                self._stacklight_green_var.set(state.get("green", False))
+                self._stacklight_amber_var.set(state.get("amber", False))
+                self._stacklight_red_var.set(state.get("red", False))
         except Exception as exc:
             LOGGER.error(f"Failed to refresh stack light state: {exc}", exc_info=True)
 
     def _set_stacklight_from_ui(self) -> None:
         """Set stack light state from checkbox values."""
-        if self._stacklight_controller is None:
-            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+        if not self._api_base_url or not self._api_key:
+            messagebox.showwarning("Stack Light", "API not initialized", parent=self)
             return
 
         try:
@@ -468,12 +498,21 @@ class Application(tk.Tk):
             amber = self._stacklight_amber_var.get()
             red = self._stacklight_red_var.get()
 
-            result = self._stacklight_controller.set_light_state(green, amber, red)
+            data = {"green": green, "amber": amber, "red": red}
+            result = self._api_request("/stacklight/set", method="POST", data=data)
 
-            if not result["success"]:
+            if result and result.get("success"):
+                self._refresh_stacklight_state()
+            elif result:
                 messagebox.showerror(
                     "Stack Light Error",
                     f"Failed to set lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+            else:
+                messagebox.showerror(
+                    "Connection Error",
+                    "Failed to connect to remote supervisor API",
                     parent=self
                 )
         except Exception as exc:
@@ -482,19 +521,26 @@ class Application(tk.Tk):
 
     def _quick_set(self, green: bool, amber: bool, red: bool) -> None:
         """Quick set stack lights to specific pattern."""
-        if self._stacklight_controller is None:
-            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+        if not self._api_base_url or not self._api_key:
+            messagebox.showwarning("Stack Light", "API not initialized", parent=self)
             return
 
         try:
-            result = self._stacklight_controller.set_light_state(green, amber, red)
+            data = {"green": green, "amber": amber, "red": red}
+            result = self._api_request("/stacklight/set", method="POST", data=data)
 
-            if result["success"]:
+            if result and result.get("success"):
                 self._refresh_stacklight_state()
-            else:
+            elif result:
                 messagebox.showerror(
                     "Stack Light Error",
                     f"Failed to set lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+            else:
+                messagebox.showerror(
+                    "Connection Error",
+                    "Failed to connect to remote supervisor API",
                     parent=self
                 )
         except Exception as exc:
@@ -503,8 +549,8 @@ class Application(tk.Tk):
 
     def _test_stacklight(self) -> None:
         """Run test sequence on stack lights."""
-        if self._stacklight_controller is None:
-            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+        if not self._api_base_url or not self._api_key:
+            messagebox.showwarning("Stack Light", "API not initialized", parent=self)
             return
 
         try:
@@ -512,16 +558,23 @@ class Application(tk.Tk):
             self._stacklight_status_var.set("Running test sequence...")
             self.update()
 
-            result = self._stacklight_controller.test_sequence()
+            result = self._api_request("/stacklight/test", method="POST")
 
-            if result["success"]:
+            if result and result.get("success"):
                 self._stacklight_status_var.set(f"Test complete ({result.get('duration_seconds', 0)}s)")
                 self._refresh_stacklight_state()
-            else:
+            elif result:
                 self._stacklight_status_var.set("Test failed")
                 messagebox.showerror(
                     "Stack Light Error",
                     f"Test sequence failed: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+            else:
+                self._stacklight_status_var.set("Connection failed")
+                messagebox.showerror(
+                    "Connection Error",
+                    "Failed to connect to remote supervisor API",
                     parent=self
                 )
         except Exception as exc:
@@ -531,24 +584,29 @@ class Application(tk.Tk):
             # Restore status
             settings = get_settings()
             mode = "MOCK MODE" if settings.stacklight.mock_mode else "Hardware Mode"
-            active_type = "active-low" if settings.stacklight.active_low else "active-high"
-            self._stacklight_status_var.set(f"Ready ({mode}, {active_type})")
+            self._stacklight_status_var.set(f"Ready (API mode - {mode})")
 
     def _turn_off_all_stacklights(self) -> None:
         """Turn off all stack lights."""
-        if self._stacklight_controller is None:
-            messagebox.showwarning("Stack Light", "Stack light controller not initialized", parent=self)
+        if not self._api_base_url or not self._api_key:
+            messagebox.showwarning("Stack Light", "API not initialized", parent=self)
             return
 
         try:
-            result = self._stacklight_controller.turn_off_all()
+            result = self._api_request("/stacklight/off", method="POST")
 
-            if result["success"]:
+            if result and result.get("success"):
                 self._refresh_stacklight_state()
-            else:
+            elif result:
                 messagebox.showerror(
                     "Stack Light Error",
                     f"Failed to turn off lights: {result.get('error', 'Unknown error')}",
+                    parent=self
+                )
+            else:
+                messagebox.showerror(
+                    "Connection Error",
+                    "Failed to connect to remote supervisor API",
                     parent=self
                 )
         except Exception as exc:
@@ -556,22 +614,14 @@ class Application(tk.Tk):
             messagebox.showerror("Error", f"Failed to turn off stack lights: {exc}", parent=self)
 
     def _reload_stacklight_config(self) -> None:
-        """Reload stack light configuration and reinitialize controller."""
+        """Reload stack light configuration and reinitialize API connection."""
         try:
-            # Clean up existing controller
-            if self._stacklight_controller is not None:
-                try:
-                    self._stacklight_controller.cleanup()
-                except Exception as cleanup_exc:
-                    LOGGER.warning(f"Error during cleanup: {cleanup_exc}")
-                self._stacklight_controller = None
-
             # Force refresh of cached settings
             LOGGER.info("Refreshing settings cache...")
             refresh_settings()
 
-            # Reinitialize with new config
-            self._initialize_stacklight_controller()
+            # Reinitialize API connection with new config
+            self._initialize_stacklight_api()
 
             messagebox.showinfo(
                 "Config Reloaded",
@@ -669,12 +719,8 @@ class Application(tk.Tk):
                 LOGGER.debug("Failed to cancel scheduled status refresh", exc_info=True)
             self._status_job = None
 
-        # Cleanup stack light controller
-        if self._stacklight_controller is not None:
-            try:
-                self._stacklight_controller.cleanup()
-            except Exception:  # pragma: no cover - defensive cleanup
-                LOGGER.debug("Failed to cleanup stack light controller", exc_info=True)
+        # No cleanup needed for API mode - remote supervisor handles GPIO
+        LOGGER.info("Closing GUI - stack light control via API remains active")
 
         self.destroy()
 
