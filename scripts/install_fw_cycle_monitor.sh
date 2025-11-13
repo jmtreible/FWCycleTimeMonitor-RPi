@@ -351,7 +351,7 @@ ensure_remote_supervisor_config() {
   "metrics_enabled": true,
   "stacklight": {
     "enabled": true,
-    "mock_mode": true,
+    "mock_mode": false,
     "active_low": true,
     "startup_self_test": true,
     "pins": {
@@ -369,9 +369,10 @@ CONFIG
     echo "Generated remote supervisor API key: ${api_key}"
     echo "Store this key securely. It is required for remote CLI access."
     echo ""
-    echo "Stack light control is enabled in MOCK MODE by default."
-    echo "To enable hardware control, edit ${REMOTE_SUPERVISOR_CONFIG}"
-    echo "and set 'mock_mode' to false under the 'stacklight' section."
+    echo "Stack light control is enabled in HARDWARE MODE by default."
+    echo "A startup self-test will run when the service starts."
+    echo "To disable hardware control, edit ${REMOTE_SUPERVISOR_CONFIG}"
+    echo "and set 'mock_mode' to true under the 'stacklight' section."
 }
 
 configure_sudoers_for_remote_supervisor() {
