@@ -95,14 +95,14 @@ async def reboot_system(_: str | None = Depends(require_api_key)) -> Dict[str, A
 
     try:
         LOGGER.warning("System reboot requested via API")
-        # Schedule reboot in 5 seconds to allow response to be sent
-        subprocess.Popen(["sudo", "shutdown", "-r", "+0.08"],
+        # Initiate immediate reboot
+        subprocess.Popen(["sudo", "shutdown", "-r", "now"],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL)
         return {
             "action": "reboot",
             "success": True,
-            "message": "System reboot initiated - Pi will restart in 5 seconds"
+            "message": "System reboot initiated - Pi will restart immediately"
         }
     except Exception as exc:
         LOGGER.error("Failed to initiate system reboot: %s", exc, exc_info=True)
