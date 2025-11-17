@@ -95,7 +95,6 @@ class CycleMonitor:
         self._counter = _CycleCounter(config.reset_hour)
         self._counter_initialized = False
         self._csv_initialized = False
-        self._csv_header = ["cycle_number", "machine_id", "timestamp"]
         self._pending_rows: list[list[str]] = []
         self._pending_loaded = False
         self._write_queue: list[list[str]] = []
@@ -411,51 +410,6 @@ class CycleMonitor:
             self._callback(timestamp)
         return timestamp
 
-    def _ensure_csv_header_present(self, csv_path: Path) -> None:
-        if not csv_path.exists():
-            with csv_path.open("w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(self._csv_header)
-            self._ensure_shared_permissions(csv_path)
-            return
-
-        try:
-            with csv_path.open("r", newline="") as csv_file:
-                reader = csv.reader(csv_file)
-                header = next(reader, None)
-                if header is None:
-                    rows: list[list[str]] = []
-                else:
-                    expected_len = len(self._csv_header)
-                    if header == self._csv_header:
-                        return
-                    if len(header) != expected_len:
-                        # Likely an older CSV layout; defer to migration logic.
-                        return
-                    rows = [header]
-                rows.extend(list(reader))
-        except OSError:
-            LOGGER.exception("Failed to read CSV file %s while verifying header", csv_path)
-            raise
-
-        if not rows:
-            with csv_path.open("w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(self._csv_header)
-            self._ensure_shared_permissions(csv_path)
-            return
-
-        LOGGER.warning("CSV %s missing header; rewriting file with header", csv_path)
-        try:
-            with csv_path.open("w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(self._csv_header)
-                writer.writerows(rows)
-        except OSError:
-            LOGGER.exception("Failed to rewrite CSV file %s with header", csv_path)
-            raise
-        self._ensure_shared_permissions(csv_path)
-
     def _prepare_storage(self) -> None:
         csv_path = self.config.csv_path()
         if self._csv_initialized:
@@ -463,7 +417,6 @@ class CycleMonitor:
                 LOGGER.warning("CSV file %s missing; reinitializing storage", csv_path)
                 self._csv_initialized = False
             else:
-                self._ensure_csv_header_present(csv_path)
                 if not self._pending_loaded:
                     self._load_pending_rows()
                 return
@@ -476,9 +429,7 @@ class CycleMonitor:
 
         if not csv_path.exists():
             try:
-                with csv_path.open("w", newline="") as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerow(self._csv_header)
+                csv_path.touch()
                 self._ensure_shared_permissions(csv_path)
             except OSError:
                 LOGGER.exception("Failed to initialize CSV file at %s", csv_path)
@@ -503,19 +454,6 @@ class CycleMonitor:
         try:
             with csv_path.open("r", newline="") as csv_file:
                 reader = csv.reader(csv_file)
-                header = next(reader, None)
-                if header != self._csv_header:
-                    LOGGER.warning("Unexpected CSV header in %s; reinitializing file", csv_path)
-                    csv_file.close()
-                    with csv_path.open("w", newline="") as new_csv:
-                        writer = csv.writer(new_csv)
-                        writer.writerow(self._csv_header)
-                    if not self._counter_initialized:
-                        reference = datetime.now(timezone.utc).astimezone()
-                        self._counter.configure(reference, 0)
-                        self._counter_initialized = True
-                    self._csv_initialized = True
-                    return
                 for row in reader:
                     if len(row) < 3:
                         continue
@@ -553,81 +491,52 @@ class CycleMonitor:
             raise
 
         if not rows:
-            try:
-                with csv_path.open("w", newline="") as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerow(self._csv_header)
-            except OSError:
-                LOGGER.exception("Failed to write header to empty CSV %s", csv_path)
-                raise
             reference = datetime.now(timezone.utc).astimezone()
             return (reference, 0)
 
-        header, data_rows = rows[0], rows[1:]
-        if header == self._csv_header:
+        # Check if we need to migrate from old format (2 columns) to new format (3 columns)
+        first_row = rows[0]
+        if len(first_row) == 3:
+            # Already in correct format
             return None
 
-        expected_len = len(self._csv_header)
-        if len(header) == expected_len:
-            LOGGER.warning("CSV %s is missing headers; rewriting file to restore them", csv_path)
-            rows_to_write = [header]
-            rows_to_write.extend(data_rows)
+        if len(first_row) == 2:
+            # Migrate from old format to new format
+            LOGGER.info("Migrating CSV file %s to include cycle numbers", csv_path)
+            counter = _CycleCounter()
+            migrated_rows = []
+            for row in rows:
+                if len(row) < 2:
+                    continue
+                ts_str = row[-1]
+                try:
+                    timestamp = datetime.fromisoformat(ts_str)
+                except ValueError:
+                    continue
+                cycle_number = counter.record(timestamp)
+                migrated_rows.append([cycle_number, row[0], timestamp.isoformat()])
+
             try:
                 with csv_path.open("w", newline="") as csv_file:
                     writer = csv.writer(csv_file)
-                    writer.writerow(self._csv_header)
-                    writer.writerows(rows_to_write)
+                    writer.writerows(migrated_rows)
             except OSError:
-                LOGGER.exception("Failed to rewrite CSV file %s with restored headers", csv_path)
+                LOGGER.exception("Failed to migrate CSV file %s", csv_path)
                 raise
-            self._ensure_shared_permissions(csv_path)
-            if rows_to_write:
-                last_row = rows_to_write[-1]
+
+            if migrated_rows:
+                last_cycle, _, ts_str = migrated_rows[-1]
                 try:
-                    last_timestamp = datetime.fromisoformat(last_row[2])
-                except (IndexError, ValueError):
+                    last_timestamp = datetime.fromisoformat(ts_str)
+                except ValueError:
                     last_timestamp = datetime.now(timezone.utc).astimezone()
-                try:
-                    last_cycle = int(last_row[0])
-                except (IndexError, ValueError):
-                    last_cycle = 0
-                return (last_timestamp, last_cycle)
-            reference = datetime.now(timezone.utc).astimezone()
-            return (reference, 0)
+                return (last_timestamp, int(last_cycle))
+            else:
+                reference = datetime.now(timezone.utc).astimezone()
+                return (reference, 0)
 
-        LOGGER.info("Migrating CSV file %s to include cycle numbers", csv_path)
-        counter = _CycleCounter()
-        migrated_rows = []
-        for row in data_rows:
-            if len(row) < 2:
-                continue
-            ts_str = row[-1]
-            try:
-                timestamp = datetime.fromisoformat(ts_str)
-            except ValueError:
-                continue
-            cycle_number = counter.record(timestamp)
-            migrated_rows.append([cycle_number, row[0], timestamp.isoformat()])
-
-        try:
-            with csv_path.open("w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(self._csv_header)
-                writer.writerows(migrated_rows)
-        except OSError:
-            LOGGER.exception("Failed to migrate CSV file %s", csv_path)
-            raise
-
-        if migrated_rows:
-            last_cycle, _, ts_str = migrated_rows[-1]
-            try:
-                last_timestamp = datetime.fromisoformat(ts_str)
-            except ValueError:
-                last_timestamp = datetime.now(timezone.utc).astimezone()
-            return (last_timestamp, int(last_cycle))
-        else:
-            reference = datetime.now(timezone.utc).astimezone()
-            return (reference, 0)
+        # Unknown format
+        return None
 
     def _record_event(self, timestamp: datetime) -> Optional[int]:
         try:
@@ -728,7 +637,6 @@ class CycleMonitor:
             self._write_queue = []
 
         try:
-            self._ensure_csv_header_present(csv_path)
             with csv_path.open("a", newline="") as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerows(rows_to_write)
