@@ -454,18 +454,17 @@ class CycleMonitor:
         try:
             with csv_path.open("r", newline="") as csv_file:
                 reader = csv.reader(csv_file)
+                row_count = 0
                 for row in reader:
-                    if len(row) < 3:
+                    if len(row) < 1:
                         continue
                     try:
-                        timestamp = datetime.fromisoformat(row[2])
+                        timestamp = datetime.fromisoformat(row[0])
                     except ValueError:
                         continue
                     last_timestamp = timestamp
-                    try:
-                        last_count = int(row[0])
-                    except ValueError:
-                        last_count = 0
+                    row_count += 1
+                last_count = row_count
         except OSError:
             LOGGER.exception("Failed to read existing CSV file %s", csv_path)
             raise
@@ -494,27 +493,28 @@ class CycleMonitor:
             reference = datetime.now(timezone.utc).astimezone()
             return (reference, 0)
 
-        # Check if we need to migrate from old format (2 columns) to new format (3 columns)
+        # Check if we need to migrate from old format (2 or 3 columns) to new format (1 column - timestamp only)
         first_row = rows[0]
-        if len(first_row) == 3:
-            # Already in correct format
+        if len(first_row) == 1:
+            # Already in correct format (timestamp only)
             return None
 
-        if len(first_row) == 2:
-            # Migrate from old format to new format
-            LOGGER.info("Migrating CSV file %s to include cycle numbers", csv_path)
+        if len(first_row) in (2, 3):
+            # Migrate from old format to new format (timestamp only)
+            LOGGER.info("Migrating CSV file %s to timestamp-only format", csv_path)
             counter = _CycleCounter()
             migrated_rows = []
             for row in rows:
-                if len(row) < 2:
+                if len(row) < 1:
                     continue
+                # Timestamp is in the last column for all old formats
                 ts_str = row[-1]
                 try:
                     timestamp = datetime.fromisoformat(ts_str)
                 except ValueError:
                     continue
                 cycle_number = counter.record(timestamp)
-                migrated_rows.append([cycle_number, row[0], timestamp.isoformat()])
+                migrated_rows.append([timestamp.isoformat()])
 
             try:
                 with csv_path.open("w", newline="") as csv_file:
@@ -525,12 +525,12 @@ class CycleMonitor:
                 raise
 
             if migrated_rows:
-                last_cycle, _, ts_str = migrated_rows[-1]
+                ts_str = migrated_rows[-1][0]
                 try:
                     last_timestamp = datetime.fromisoformat(ts_str)
                 except ValueError:
                     last_timestamp = datetime.now(timezone.utc).astimezone()
-                return (last_timestamp, int(last_cycle))
+                return (last_timestamp, len(migrated_rows))
             else:
                 reference = datetime.now(timezone.utc).astimezone()
                 return (reference, 0)
@@ -547,7 +547,7 @@ class CycleMonitor:
 
         cycle_number = self._counter.record(timestamp)
         csv_path = self.config.csv_path()
-        row = [str(cycle_number), self.config.machine_id, timestamp.isoformat()]
+        row = [timestamp.isoformat()]
         self._enqueue_row(row)
         try:
             save_cycle_state(
@@ -579,7 +579,7 @@ class CycleMonitor:
         else:
             if not self._flush_queue():
                 LOGGER.warning(
-                    "CSV file %s is busy; queued cycle #%s for retry", self.config.csv_path(), row[0]
+                    "CSV file %s is busy; queued event at %s for retry", self.config.csv_path(), row[0]
                 )
 
     def _spool_path(self) -> Path:
@@ -595,8 +595,8 @@ class CycleMonitor:
                 with spool_path.open("r", newline="") as spool_file:
                     reader = csv.reader(spool_file)
                     for row in reader:
-                        if len(row) >= 3:
-                            self._pending_rows.append(row[:3])
+                        if len(row) >= 1:
+                            self._pending_rows.append(row[:1])
             except OSError:
                 LOGGER.exception("Failed to read pending events from %s", spool_path)
         self._pending_loaded = True
@@ -644,7 +644,7 @@ class CycleMonitor:
             self._persist_pending_rows()
             if latest_row and had_new_rows:
                 LOGGER.debug(
-                    "Logged cycle #%s at %s to %s", latest_row[0], latest_row[2], csv_path
+                    "Logged event at %s to %s", latest_row[0], csv_path
                 )
             elif rows_to_write:
                 LOGGER.debug("Flushed %s pending rows to %s", len(rows_to_write), csv_path)
